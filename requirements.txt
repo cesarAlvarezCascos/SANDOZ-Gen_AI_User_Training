@@ -14,3 +14,11 @@ pgvector>=0.2.5,<0.3
 
 pydantic>=2.6,<3.0
 numpy>=1.26,<3.0
+
+
+
+langchain
+langchain-core
+langchain-community
+pymupdf
+chromadb
