@@ -78,9 +78,10 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
     ranked = sorted(S.items(), key=lambda x: x[1], reverse=True)[:top]
     return [
         {
-            "document_id": mid,
+            # Ensure values are JSON-serializable (UUIDs -> str)
+            "document_id": str(mid),
             "snippet": M[mid][0][:600],
-            "source_path": M[mid][1],
+            "source_path": str(M[mid][1]) if M[mid][1] is not None else None,
             "score": float(s)
         }
         for mid, s in ranked

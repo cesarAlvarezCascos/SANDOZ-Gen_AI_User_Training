@@ -27,13 +27,23 @@ SYSTEM = (
 def format_citations(passages):
     lines = []
     for i, p in enumerate(passages, start=1):
-        name = os.path.basename(p["source_path"]).replace("file://", "")
+        # Be defensive: some passages might not have a source_path (None).
+        sp = p.get("source_path") if isinstance(p, dict) else None
+        if not sp:
+            name = "<unknown>"
+        else:
+            # strip file:// then take basename
+            name = os.path.basename(str(sp).replace("file://", ""))
         lines.append(f"[{i}] {name}")
     return "\n".join(lines)
 
 @app.post("/ask")
 def ask(req: Ask):
-    passages = search_kb(req.query, req.role)
+    # search_kb(query, top_k=8) expects an integer as the second arg.
+    # Passing req.role (a string) was accidental and caused errors like
+    # `invalid input syntax for type bigint: "analystanalyst"` because
+    # the string was multiplied/used where an int (LIMIT) was expected.
+    passages = search_kb(req.query)
     if not passages:
         return {"answer": "No encontré coincidencias relevantes en la base de datos.", "citations": []}
     elif len(passages) < 2:
