@@ -1,68 +1,95 @@
-import os, re, psycopg
-from pypdf import PdfReader
+import sys
+import os
+
+# Add project root to sys.path so 'src' can be imported
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
+from pathlib import Path
+from tqdm import tqdm
+import psycopg
 from dotenv import load_dotenv
 from openai import OpenAI
+from src.data_loader import load_pdf_documents
+from src.embedding import EmbeddingPipeline
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 conn = psycopg.connect(os.getenv("DATABASE_URL"))
 
-CHUNK_TOKENS = 350
-OVERLAP = 60
-
-def pdf_to_text(path):
-    r = PdfReader(path)
-    text = "\n".join((p.extract_text() or "") for p in r.pages)
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
-
-def chunk(text, n=CHUNK_TOKENS, overlap=OVERLAP):
-    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
-    out, buf, tok = [], [], 0
-    for p in paras:
-        w = p.split()
-        if tok + len(w) > n and buf:
-            out.append(" ".join(buf))
-            buf = buf[-overlap:]; tok = len(buf)
-        buf += w; tok += len(w)
-    if buf: out.append(" ".join(buf))
-    return out
-
-def embed(texts):
-    resp = client.embeddings.create(model="text-embedding-3-small", input=texts)
-    return [d.embedding for d in resp.data]
-
-def upsert_material(title, body, source_url):
+# Database helpers
+def upsert_document(file_name, body):
     with conn.cursor() as cur:
         cur.execute("""
-          INSERT INTO materials(title, summary, body, modality, source_url)
-          VALUES (%s,%s,%s,'doc',%s) RETURNING id
-        """, (title, body[:500], body, source_url))
-        mid = cur.fetchone()[0]
+            INSERT INTO documents (file_name, body)
+            VALUES (%s, %s)
+            RETURNING id
+        """, (file_name, body))
+        doc_id = cur.fetchone()[0]
     conn.commit()
-    return mid
+    return doc_id
 
-def upsert_chunks(material_id, chunks, embs):
+
+def upsert_chunk(document_id, idx, content):
     with conn.cursor() as cur:
-        for i,(t,e) in enumerate(zip(chunks, embs)):
-            cur.execute("""
-              INSERT INTO material_chunks(material_id,chunk_idx,text,embedding)
-              VALUES (%s,%s,%s,%s)
-            """, (material_id, i, t, e))
+        cur.execute("""
+            INSERT INTO chunks (document_id, chunk_idx, body)
+            VALUES (%s, %s, %s)
+            RETURNING id
+        """, (document_id, idx, content))
+        chunk_id = cur.fetchone()[0]
     conn.commit()
+    return chunk_id
+
+
+def insert_chunk_embedding(chunk_id, embedding):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO chunk_embeddings (chunk_id, embedding)
+            VALUES (%s, %s)
+        """, (chunk_id, embedding))
+    conn.commit()
+
+
+# Igestion pipeline
+def ingest_documents(data_dir: str):
+
+    documents = load_pdf_documents(data_dir)
+    print(f"[INFO] Loaded {len(documents)} PDF documents.")
+
+    emb_pipe = EmbeddingPipeline(client)
+
+    chunks = emb_pipe.chunk_documents(documents)
+
+    embeddings = emb_pipe.embed_chunks(chunks)
+    if hasattr(embeddings, "data"):  
+        embeddings = [d.embedding for d in embeddings.data]
+
+    # Group chunks by file
+    grouped = {}
+    for chunk, emb in zip(chunks, embeddings):
+        src = Path(chunk.metadata.get("source", "unknown")).name
+        grouped.setdefault(src, []).append((chunk.page_content, emb))
+
+    # Upload to database with a progress bar
+    items = list(grouped.items())
+    for file_name, chunk_list in tqdm(items, desc="Uploading files", unit="file"):
+        tqdm.write(f"[UPLOAD] {file_name}: {len(chunk_list)} chunks")
+        body = "\n".join([c[0] for c in chunk_list])
+        doc_id = upsert_document(file_name, body)
+
+        for idx, (content, emb) in enumerate(chunk_list):
+            chunk_id = upsert_chunk(doc_id, idx, content)
+            insert_chunk_embedding(chunk_id, emb)
+
+        tqdm.write(f"[DONE] Uploaded {file_name}")
+
+    print("\n Ingest complete.")
+
+
 
 if __name__ == "__main__":
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "pdfs"))
-    pdfs = [
-        "Introduction to Pre-Selection Pipeline.pdf",
-        "Understanding IP Information.pdf",
-        "CCO relevant Abbreviations & Definitions.pdf",
-        "sandoz_agents_for_userTraining.pdf",
-    ]
-    for name in pdfs:
-        path = os.path.join(base, name)
-        body = pdf_to_text(path)
-        mid = upsert_material(name, body, f"file://{path}")
-        chunks = chunk(body)
-        embs = embed(chunks)
-        upsert_chunks(mid, chunks, embs)
-    print("Ingesta completa")
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "pdfs")
+    ingest_documents(base_dir)

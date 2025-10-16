@@ -1,16 +1,22 @@
-# api/main.py (fragmento)
-
-import os, re  # <-- añade re
+import os, re  
 from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
-from tools.search_kb import search_kb
-from tools.plan_path import plan_path
+from src.search_kb import search_kb
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5500", "http://127.0.0.1:5500", "http://localhost:5173"],  # añade los que uses
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class Ask(BaseModel):
     user_id: str | None = None
@@ -30,14 +36,26 @@ SYSTEM = (
 def format_citations(passages):
     lines = []
     for i, p in enumerate(passages, start=1):
-        name = os.path.basename(p["source_url"]).replace("file://", "")
+        # Be defensive: some passages might not have a source_path (None).
+        sp = p.get("source_path") if isinstance(p, dict) else None
+        if not sp:
+            name = "<unknown>"
+        else:
+            # strip file:// then take basename
+            name = os.path.basename(str(sp).replace("file://", ""))
         lines.append(f"[{i}] {name}")
     return "\n".join(lines)
 
 @app.post("/ask")
 def ask(req: Ask):
-    passages = search_kb(req.query, req.role)
-    if len(passages) < 2:
+    # search_kb(query, top_k=8) expects an integer as the second arg.
+    # Passing req.role (a string) was accidental and caused errors like
+    # `invalid input syntax for type bigint: "analystanalyst"` because
+    # the string was multiplied/used where an int (LIMIT) was expected.
+    passages = search_kb(req.query)
+    if not passages:
+        return {"answer": "No encontré coincidencias relevantes en la base de datos.", "citations": []}
+    elif len(passages) < 2:
         return {
             "answer": "No estoy 100% segura; necesito más fuentes o material.",
             "citations": passages
