@@ -1,5 +1,6 @@
 from typing import List, Any
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import numpy as np
 from src.data_loader import load_pdf_documents
 

@@ -62,8 +62,8 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
     Combine vector search and keyword search scores using a weighted fusion.
     alpha controls the weight given to vector similarity.
     """
-    S = defaultdict(float)
-    M = {}
+    S = defaultdict(float) # Weighted sum of scores per doc
+    M = {}  # chunk snippet (txt) and route (url) for each doc (did)
 
     for (_id, txt, did, url, sc) in vec_hits:
         if did not in M:

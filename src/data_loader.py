@@ -18,8 +18,8 @@ def load_pdf_documents(data_dir: str) -> List[Any]:
     for pdf_file in tqdm(pdf_files, desc="Loading PDFs", unit="file"):
         try:
             loader = PyPDFLoader(str(pdf_file))
-            loaded = loader.load()
-            documents.extend(loaded)
+            loaded = loader.load()  # Convert loaded pdf document into a langchain documents list (one per page)
+            documents.extend(loaded)  # Add loaded docs into the main list (concatenate langchain objects/docs)
         except Exception as e:
             tqdm.write(f"[ERROR] Failed to load PDF {pdf_file}: {e}")
 

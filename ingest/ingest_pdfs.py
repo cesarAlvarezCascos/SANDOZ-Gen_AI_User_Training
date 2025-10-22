@@ -14,12 +14,14 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from src.data_loader import load_pdf_documents
 from src.embedding import EmbeddingPipeline
+import glob
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 conn = psycopg.connect(os.getenv("DATABASE_URL"))
 
 # Database helpers
+    # Insert doc in table 'documents' and return doc ID
 def upsert_document(file_name, body):
     with conn.cursor() as cur:
         cur.execute("""
@@ -31,7 +33,7 @@ def upsert_document(file_name, body):
     conn.commit()
     return doc_id
 
-
+    # Insert chunk in table 'chunks' and return chunk ID
 def upsert_chunk(document_id, idx, content):
     with conn.cursor() as cur:
         cur.execute("""
@@ -43,7 +45,7 @@ def upsert_chunk(document_id, idx, content):
     conn.commit()
     return chunk_id
 
-
+    # Insert a chunk embedding in table 'chunk_embeddings' 
 def insert_chunk_embedding(chunk_id, embedding):
     with conn.cursor() as cur:
         cur.execute("""
@@ -53,40 +55,78 @@ def insert_chunk_embedding(chunk_id, embedding):
     conn.commit()
 
 
-# Igestion pipeline
+# Check duplicates: used to ingest only documents that don't exist already in the DB  
+
+def document_exists(file_name):
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM documents WHERE file_name = %s", (file_name,))
+        return cur.fetchone() is not None
+
+
+# Ingestion pipeline 
 def ingest_documents(data_dir: str):
 
-    documents = load_pdf_documents(data_dir)
-    print(f"[INFO] Loaded {len(documents)} PDF documents.")
+    pdf_files = glob.glob(os.path.join(data_dir, '**', '*.pdf'), recursive=True)
+    print(f"[INFO] Loaded {len(pdf_files)} PDF documents.")
 
-    emb_pipe = EmbeddingPipeline(client)
+    documents = load_pdf_documents(data_dir)  # All the langchain objects/documents (1 per PDF page) concatenated in a list
+    #print(f"[INFO] Loaded {len(documents)} PDF documents.") # This doesn't reflect the nº of PDF documents 
 
-    chunks = emb_pipe.chunk_documents(documents)
+    # Group documents per PDF file and filter the duplicate ones:
+    grouped_docs = {}
+    skipped_files = set()
+    for doc in documents:
+        src = Path(doc.metadata.get("source", "unknown")).name
+        if document_exists(src):
+            skipped_files.add(src)
+            continue  # Skip duplicated documents
+        grouped_docs.setdefault(src, []).append(doc)
 
-    embeddings = emb_pipe.embed_chunks(chunks)
+    # Warning about duplicates (PDFs docs with same name)
+    for file_name in skipped_files:
+        print(f"[SKIP] '{file_name}' already exists in database or an existing file has an identical name. Change file name if the file is not the same.")
+
+    # Prepare list of new documents to process/load
+    new_docs = [doc for docs in grouped_docs.values() for doc in docs]
+    print(f"[INFO] Processing {len(grouped_docs)} new PDF files.")
+
+    if not new_docs:
+        print("[INFO] Can't find new documents to process.")
+        print(f"\nIngest complete. New Files Uploaded: 0. Skipped (duplicates): {len(skipped_files)}")
+        return
+
+    # Chunking and Embeddings only for new documents
+    emb_pipe = EmbeddingPipeline(client) # Initialize pipeline for generating embeddings
+
+    chunks = emb_pipe.chunk_documents(documents)  # Separate documents into chunks 
+
+    embeddings = emb_pipe.embed_chunks(chunks)  # Generate embedding for each chunk
     if hasattr(embeddings, "data"):  
-        embeddings = [d.embedding for d in embeddings.data]
+        embeddings = [d.embedding for d in embeddings.data]  # embed_chunks ya devuelve la lista de vectores plana, así que este bloque es más para asegurar
 
-    # Group chunks by file
+    # Group chunks by file using a dictionary
     grouped = {}
     for chunk, emb in zip(chunks, embeddings):
         src = Path(chunk.metadata.get("source", "unknown")).name
         grouped.setdefault(src, []).append((chunk.page_content, emb))
 
-    # Upload to database with a progress bar
+
+    # Upload only new ones into the database with a progress bar
     items = list(grouped.items())
+    uploaded = 0
     for file_name, chunk_list in tqdm(items, desc="Uploading files", unit="file"):
-        tqdm.write(f"[UPLOAD] {file_name}: {len(chunk_list)} chunks")
-        body = "\n".join([c[0] for c in chunk_list])
+        tqdm.write(f"[UPLOAD] {file_name}: {len(chunk_list)} chunks") # How many chunks the file to be uploaded has
+        body = "\n".join([c[0] for c in chunk_list])  # Joins the doc's chunks in a single body
         doc_id = upsert_document(file_name, body)
 
         for idx, (content, emb) in enumerate(chunk_list):
             chunk_id = upsert_chunk(doc_id, idx, content)
             insert_chunk_embedding(chunk_id, emb)
 
-        tqdm.write(f"[DONE] Uploaded {file_name}")
+        tqdm.write(f"[DONE] Uploaded '{file_name}'")
+        uploaded += 1
 
-    print("\n Ingest complete.")
+    print(f"\n Ingest complete. New Files Uploaded: {uploaded}. Skipped (duplicates): {len(skipped_files)}")
 
 
 
