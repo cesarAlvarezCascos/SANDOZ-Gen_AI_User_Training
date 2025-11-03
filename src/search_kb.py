@@ -8,7 +8,6 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 conn = psycopg.connect(os.getenv("DATABASE_URL"))
 
 
-
 def _embed(q: str):
     """Create a 1536-dim embedding vector from the user query."""
     return client.embeddings.create(model="text-embedding-3-small", input=q).data[0].embedding
@@ -25,7 +24,8 @@ def vector_search(qvec, k=12):
                 c.id AS chunk_id,
                 c.body AS chunk_text,
                 d.id AS document_id,
-                d.source_path,
+                d.file_name,
+                c.page_number,
                 1 - (ce.embedding <=> %s::vector) AS vscore
             FROM chunk_embeddings ce
             JOIN chunks c ON ce.chunk_id = c.id
@@ -39,7 +39,7 @@ def vector_search(qvec, k=12):
 def keyword_search(query, k=12):
     """
     Perform keyword-based search using pg_trgm similarity between query text 
-    and document body/summary. Returns the top-k matches.
+    and chunks. Returns the top-k matches (most relevant chunks).
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -47,14 +47,17 @@ def keyword_search(query, k=12):
                 c.id AS chunk_id,
                 c.body AS chunk_text,
                 d.id AS document_id,
-                d.source_path,
-                GREATEST(similarity(d.body, %s), similarity(d.summary, %s)) AS kscore
-            FROM documents d
-            JOIN chunks c ON c.document_id = d.id
+                d.file_name,
+                c.page_number,
+                similarity(c.body, %s) AS kscore
+            FROM chunks c
+            JOIN documents d ON c.document_id = d.id
+            WHERE similarity(c.body, %s) > 0.1
             ORDER BY kscore DESC
             LIMIT %s;
         """, (query, query, k))
         return cur.fetchall()
+    
 
 
 def fuse(vec_hits, key_hits, alpha=0.6, top=8):
@@ -65,26 +68,27 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
     S = defaultdict(float) # Weighted sum of scores per doc
     M = {}  # chunk snippet (txt) and route (url) for each doc (did)
 
-    for (_id, txt, did, url, sc) in vec_hits:
-        if did not in M:
-            M[did] = (txt, url)
-        S[did] += alpha * float(sc)
+    for (cid, txt, did, filename, sc) in vec_hits:
+        if cid not in M:
+            M[cid] = (txt, filename, did)
+        S[cid] += alpha * float(sc)
 
-    for (_id, txt, did, url, sc) in key_hits:
-        if did not in M:
-            M[did] = (txt, url)
-        S[did] += (1 - alpha) * float(sc)
+    for (cid, txt, did, filename, sc) in key_hits:
+        if cid not in M:
+            M[cid] = (txt, filename, did)
+        S[cid] += (1 - alpha) * float(sc)
 
     ranked = sorted(S.items(), key=lambda x: x[1], reverse=True)[:top]
     return [
         {
             # Ensure values are JSON-serializable (UUIDs -> str)
-            "document_id": str(mid),
-            "snippet": M[mid][0][:600],
-            "source_path": str(M[mid][1]) if M[mid][1] is not None else None,
+            "chunk_id": str(cid),
+            "file_name": str(M[cid][1]),
+            "document_id": str(M[cid][2]),
+            "snippet": M[cid][0][:600],
             "score": float(s)
         }
-        for mid, s in ranked
+        for cid, s in ranked
     ]
 
 

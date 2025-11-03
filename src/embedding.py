@@ -2,7 +2,6 @@ from typing import List, Any
 #from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import numpy as np
-from src.data_loader import load_pdf_documents
 
 class EmbeddingPipeline:
     def __init__(self, client, model_name: str = "text-embedding-3-small", chunk_size: int = 1000, chunk_overlap: int = 200):

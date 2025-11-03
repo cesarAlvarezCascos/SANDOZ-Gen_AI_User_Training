@@ -139,8 +139,8 @@
       const ul = node.querySelector('.sources');
       (citations || []).forEach((c, i) => {
         const li = document.createElement('li');
-        const name = (c && c.source_path)
-          ? String(c.source_path).replace(/^file:\/\//,'').split('/').pop()
+        const name = (c && c.file_name)
+          ? String(c.file_name)
           : '<unknown>';
         li.textContent = `[${i+1}] ${name}`;
         ul.appendChild(li);

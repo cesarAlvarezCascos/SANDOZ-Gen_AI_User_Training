@@ -3,6 +3,8 @@ from typing import List, Any
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from tqdm import tqdm
 
+# YA NO SE USA ESTE CODIGO
+
 
 def load_pdf_documents(data_dir: str) -> List[Any]:
     """

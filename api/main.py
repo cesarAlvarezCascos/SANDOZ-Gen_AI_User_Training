@@ -42,13 +42,11 @@ SYSTEM = (
 def format_citations(passages):
     lines = []
     for i, p in enumerate(passages, start=1):
-        # Be defensive: some passages might not have a source_path (None).
-        sp = p.get("source_path") if isinstance(p, dict) else None
-        if not sp:
+        filename = p.get("file_name") if isinstance(p, dict) else None
+        if not filename:
             name = "<unknown>"  # placeholder
         else:
-            # strip file:// then take file basename
-            name = os.path.basename(str(sp).replace("file://", ""))
+            name = filename
         lines.append(f"[{i}] {name}")
     return "\n".join(lines)
 
