@@ -27,11 +27,10 @@ class Ask(BaseModel):
     level: int | None = 2
 
 SYSTEM = (
-    "Eres un Training Agent para un sistema de pipelines. "
-    "Responde breve (<= 180 palabras), en pasos claros. "
-    "Usa citaciones [n] SOLO para referirte a los pasajes proporcionados. "
-    "NO incluyas un bloque 'Fuentes:' en tu salida; lo añadirá el sistema."
-)
+    "You are a Training Agent for a pipeline system."
+    "Respond briefly (≤ 180 words) in clear steps."
+    "Use [n] citations ONLY to refer to the provided passages."
+    "DO NOT include a 'Sources:' block in your output; the system will add it.")
 
 def format_citations(passages):
     lines = []
@@ -54,25 +53,27 @@ def ask(req: Ask):
     # the string was multiplied/used where an int (LIMIT) was expected.
     passages = search_kb(req.query)
     if not passages:
-        return {"answer": "No encontré coincidencias relevantes en la base de datos.", "citations": []}
+        return {"answer": "I didn’t find any relevant matches in the database.", "citations": []}
     elif len(passages) < 2:
         return {
-            "answer": "No estoy 100% segura; necesito más fuentes o material.",
+            "answer": "I’m not 100% sure; I need more sources or material.",
             "citations": passages
         }
 
     ctx = "\n\n".join([f"[{i+1}] {p['snippet']}" for i, p in enumerate(passages[:6])])
     prompt = (
         f"{SYSTEM}\n\n"
-        f"Pregunta del usuario: {req.query}\n\n"
-        "Pasajes relevantes (usa [n] para citarlos en tu respuesta):\n"
+        f"User’s question: {req.query}\n\n"
+        "Relevant passages (use [n] to cite them in your answer):\n"
         f"{ctx}\n\n"
-        "Instrucciones:\n"
-        "- Resume y responde sin exceder 180 palabras.\n"
-        "- Inserta [n] exactamente donde uses un dato de un pasaje.\n"
-        "- NO inventes fuentes ni añadas 'Fuentes:' al final.\n"
-        "- Incluye al menos dos citaciones si hay >=2 pasajes.\n"
+        "Instructions:\n"
+        "- Summarise and answer in no more than 180 words.\n"
+        "- Respond in the same language in which you are asked.\n"
+        "- Insert [n] exactly where you use a fact from a passage.\n"
+        "- DO NOT invent sources or add 'Sources:' at the end.\n"
+        "- Include at least two citations if there are ≥ 2 passages.\n"
     )
+
 
     try:
         resp = client.chat.completions.create(
