@@ -68,14 +68,14 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
     S = defaultdict(float) # Weighted sum of scores per doc
     M = {}  # chunk snippet (txt) and route (url) for each doc (did)
 
-    for (cid, txt, did, filename, sc) in vec_hits:
+    for (cid, txt, did, filename, page_num, sc) in vec_hits:
         if cid not in M:
-            M[cid] = (txt, filename, did)
+            M[cid] = (txt, filename, did, page_num)
         S[cid] += alpha * float(sc)
 
-    for (cid, txt, did, filename, sc) in key_hits:
+    for (cid, txt, did, filename, page_num, sc) in key_hits:
         if cid not in M:
-            M[cid] = (txt, filename, did)
+            M[cid] = (txt, filename, did, page_num)
         S[cid] += (1 - alpha) * float(sc)
 
     ranked = sorted(S.items(), key=lambda x: x[1], reverse=True)[:top]
@@ -85,6 +85,7 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
             "chunk_id": str(cid),
             "file_name": str(M[cid][1]),
             "document_id": str(M[cid][2]),
+            "page_number": M[cid][3],
             "snippet": M[cid][0][:600],
             "score": float(s)
         }

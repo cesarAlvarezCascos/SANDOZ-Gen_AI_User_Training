@@ -23,3 +23,7 @@ langchain-community
 pymupdf
 chromadb
 langchain_text_splitters
+
+scikit-learn
+joblib
+spacy

@@ -19,7 +19,7 @@ class EmbeddingPipeline:
             separators=["\n\n", "\n", " ", ""]
         )
         chunks = splitter.split_documents(documents)
-        print(f"[INFO] Split {len(documents)} documents into {len(chunks)} chunks.")
+        print(f"[INFO] Split {len(documents)} documents into {len(chunks)} chunks.")  # Where 'documents' means pages
         return chunks
 
     def embed_chunks(self, chunks: List[Any]) -> np.ndarray:

@@ -1,3 +1,12 @@
+# Instalar Dependencias y modelo de lenguaje de spaCy
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+python -m spacy download en_core_web_lg
+```
+
 # Runear el agente
 1. Arrancar la api
 ```bash

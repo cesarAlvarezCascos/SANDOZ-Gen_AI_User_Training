@@ -18,6 +18,7 @@ from openai import OpenAI
 from src.embedding import EmbeddingPipeline
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 import glob
+from src.classification import init_topic_classifier_from_db, assign_topics_to_chunks
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -59,10 +60,11 @@ def archive_old_version(pdf_path):
     return dest
 
 
-def find_similar_document(embedding_avg, threshold=0.85):
+def find_similar_document(embedding_avg, file_name, threshold=0.95):
     """
-    Looks for documents with similar avg embedding (> threshold)
-    > threshold means its an upadted version, < threshold means new doc
+    Detects an updated version using:
+    Doc. Embedding Similarity: looks for documents with similar avg embedding (> threshold)
+    Filename Similarity: using pg_trm with 0.5 similarity in the filename
     Returns (doc_id, file_name, similarity) of the most similar.
     """
     with conn.cursor() as cur:
@@ -70,16 +72,18 @@ def find_similar_document(embedding_avg, threshold=0.85):
             SELECT 
                 id, 
                 file_name,
-                1 - (embedding_avg <=> %s::vector) AS similarity
+                1 - (embedding_avg <=> %s::vector) AS sim_embedding,
+                similarity(file_name, %s) AS sim_filename
             FROM documents
             WHERE embedding_avg IS NOT NULL
-            ORDER BY embedding_avg <=> %s::vector
+            ORDER BY sim_embedding DESC
             LIMIT 1
-        """, (embedding_avg, embedding_avg))
-        result = cur.fetchone()
-        
-        if result and result[2] >= threshold:
-            return result  # (id, file_name, similarity)
+        """, (embedding_avg, file_name))
+
+        for doc_id, old_name, sim_emb, sim_fname in cur.fetchall():
+            if sim_emb >= threshold and sim_fname > 0.5:
+                return (doc_id, old_name, sim_emb)  # (id, file_name, similarity)
+    
         return None
     
 
@@ -219,7 +223,7 @@ def ingest_documents(data_dir: str):
         embedding_avg = np.mean(embeddings, axis = 0).tolist()
 
         # 6: Look for a similar document
-        similar = find_similar_document(embedding_avg, threshold = 0.85)
+        similar = find_similar_document(embedding_avg, file_name, threshold = 0.95)
 
         if similar:
             # It is an UPDATED DOC
@@ -252,6 +256,13 @@ def ingest_documents(data_dir: str):
     # 9: check for deleted files
     print("\n[INFO] Checking for deleted files...")
     deleted = sync_deletions(pdf_files)
+
+    # 10: assign topics to chunks and propagate to documents
+    print("[INFO] Initializing topics classifier...")
+    init_topic_classifier_from_db()  # Train/Load Model
+    
+    print("[INFO] Assigning topics to chunks...")
+    assign_topics_to_chunks(overwrite=True)  # Classify all chunks
     
     # Final Summary
     print(f"\n{'='*60}")
