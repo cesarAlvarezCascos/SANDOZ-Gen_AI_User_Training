@@ -1,56 +1,63 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Training Agent — Chat</title>
   <script>
-    // ⚙️ Ajusta esto a tu backend
     const API_URL = "http://localhost:8000/ask";
   </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    /* Scroll bonito y auto-ajuste */
     .scrollbar-thin::-webkit-scrollbar { width: 8px; }
-    .scrollbar-thin::-webkit-scrollbar-thumb {
-      background: #cbd5e1; border-radius: 9999px;
-    }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
     .bubble { max-width: 80%; }
     .msg a { text-decoration: underline; }
     .prose pre { white-space: pre-wrap; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     pre { white-space: pre-wrap; word-wrap: break-word; }
+    .btn-flag { transition: transform .15s ease; }
+    .btn-flag:active { transform: scale(0.98); }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
   <div class="max-w-3xl mx-auto px-4 py-6">
-    <header class="flex items-center gap-3 mb-4">
-      <div class="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-bold">STA</div>
-      <div>
-        <h1 class="text-xl font-semibold">Sandoz Training Agent</h1>
+    <header class="mb-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-bold">STA</div>
+          <h1 class="text-xl font-semibold">Sandoz Training Agent</h1>
+        </div>
+
+        <!-- Right: toggle + hint -->
+        <div class="flex flex-col items-end">
+          <button id="langToggle"
+            class="btn-flag inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            title="Switch language">
+            <span id="langFlag" aria-hidden="true">🇬🇧</span>
+            <span id="langLabel" class="text-slate-700">EN</span>
+          </button>
+          <div id="langHint" class="text-xs text-slate-500 mt-1"></div>
+        </div>
       </div>
     </header>
 
     <main id="chat" class="bg-white rounded-2xl shadow p-4 h-[70vh] overflow-y-auto scrollbar-thin space-y-4">
-      <!-- Mensaje de bienvenida -->
       <div class="flex gap-3 items-start">
         <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
         <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg">
-          <p class="text-sm">
-            ¡Hola! Soy tu Training Agent. Hazme una pregunta e intentaré responder lo mejor posible.
-            Las Fuentes y el bloque Citations aparecerán en un desplegable.
+          <p id="welcomeText" class="text-sm">
+            Hello! I’m your Training Agent. Ask me a question, and I’ll do my best to answer.
           </p>
         </div>
       </div>
     </main>
 
     <form id="composer" class="mt-4 flex items-end gap-2">
-      <textarea id="input" rows="2" placeholder="Escribe tu pregunta… (Shift+Enter: salto de línea)"
+      <textarea id="input" rows="2" placeholder="Type your question… (Shift+Enter: line break)"
         class="flex-1 rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
       <button id="send" type="submit"
-        class="rounded-xl bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-50">Enviar</button>
+        class="rounded-xl bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-50">Send</button>
     </form>
   </div>
 
@@ -58,29 +65,23 @@
   <template id="msg-user">
     <div class="flex gap-3 items-start justify-end">
       <div class="bubble bg-indigo-600 text-white rounded-2xl px-4 py-3 msg"></div>
-      <div class="w-9 h-9 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center text-sm">Tú</div>
+      <div class="w-9 h-9 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center text-sm" data-i18n-user>You</div>
     </div>
   </template>
 
   <template id="msg-bot">
     <div class="flex gap-3 items-start">
-      <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">TA</div>
+      <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
       <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg w-full">
         <div class="answer prose prose-sm max-w-none"></div>
-
-        <!-- Un único desplegable con Fuentes y Citations -->
         <details class="mt-3 sources-citations">
-          <summary class="text-xs text-slate-500 cursor-pointer">Fuentes y Citations</summary>
-
-          <!-- Fuentes -->
+          <summary class="text-xs text-slate-500 cursor-pointer" data-i18n-summary>Sources &amp; Citations</summary>
           <div class="mt-2">
-            <div class="mono text-xs text-slate-700">Fuentes:</div>
+            <div class="mono text-xs text-slate-700" data-i18n-sources-label>Sources:</div>
             <ul class="sources list-disc pl-5 mt-1 text-xs text-slate-600"></ul>
           </div>
-
-          <!-- Citations (JSON pretty) -->
           <div class="mt-3">
-            <div class="mono text-xs text-slate-700">Citations:</div>
+            <div class="mono text-xs text-slate-700" data-i18n-citations-label>Citations:</div>
             <pre class="mono text-xs bg-white border border-slate-200 rounded-lg p-3 mt-1 overflow-x-auto citations-json"></pre>
           </div>
         </details>
@@ -90,15 +91,14 @@
 
   <template id="msg-bot-loading">
     <div class="flex gap-3 items-start">
-      <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">TA</div>
+      <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
       <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg">
         <div class="flex items-center gap-2 text-sm text-slate-500">
           <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
-            <path class="opacity-75" fill="currentColor"
-              d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
           </svg>
-          Generando respuesta…
+          <span data-i18n-loading>Generating answer…</span>
         </div>
       </div>
     </div>
@@ -114,8 +114,67 @@
     const tplBot = document.getElementById('msg-bot');
     const tplLoading = document.getElementById('msg-bot-loading');
 
+    // --- i18n (UI only) ---
+    let currentLang = 'en';
+    const i18n = {
+      en: {
+        placeholder: "Type your question… (Shift+Enter: line break)",
+        send: "Send",
+        userBadge: "You",
+        welcome: "Hello! I’m your Training Agent. Ask me a question, and I’ll do my best to answer.",
+        summary: "Sources & Citations",
+        sourcesLabel: "Sources:",
+        citationsLabel: "Citations:",
+        loading: "Generating answer…",
+        apiError: "Sorry, there was an error calling the API. Make sure the server is running and CORS is enabled.",
+        hint: "You can switch language by clicking the flag."
+      },
+      es: {
+        placeholder: "Escribe tu pregunta… (Shift+Enter: salto de línea)",
+        send: "Enviar",
+        userBadge: "Tú",
+        welcome: "¡Hola! Soy tu Training Agent. Pregúntame lo que quieras y haré lo posible por responder.",
+        summary: "Fuentes y Citations",
+        sourcesLabel: "Fuentes:",
+        citationsLabel: "Citations:",
+        loading: "Generando respuesta…",
+        apiError: "Lo siento, hubo un error al llamar a la API. Revisa que el servidor esté activo y CORS habilitado.",
+        hint: "Puedes cambiar el idioma clicando en la bandera."
+      }
+    };
+
+    const langToggle = document.getElementById('langToggle');
+    const langFlag = document.getElementById('langFlag');
+    const langLabel = document.getElementById('langLabel');
+    const welcomeText = document.getElementById('welcomeText');
+    const langHint = document.getElementById('langHint');
+
+    function applyI18n() {
+      const t = i18n[currentLang];
+      document.documentElement.lang = currentLang === 'en' ? 'en' : 'es';
+      input.placeholder = t.placeholder;
+      btn.textContent = t.send;
+      welcomeText.textContent = t.welcome;
+      langHint.textContent = t.hint;
+
+      if (currentLang === 'en') { langFlag.textContent = '🇬🇧'; langLabel.textContent = 'EN'; }
+      else { langFlag.textContent = '🇪🇸'; langLabel.textContent = 'ES'; }
+
+      document.querySelectorAll('[data-i18n-summary]').forEach(el => el.textContent = t.summary);
+      document.querySelectorAll('[data-i18n-sources-label]').forEach(el => el.textContent = t.sourcesLabel);
+      document.querySelectorAll('[data-i18n-citations-label]').forEach(el => el.textContent = t.citationsLabel);
+      document.querySelectorAll('[data-i18n-loading]').forEach(el => el.textContent = t.loading);
+      document.querySelectorAll('[data-i18n-user]').forEach(el => el.textContent = t.userBadge);
+    }
+
+    langToggle.addEventListener('click', () => {
+      currentLang = currentLang === 'en' ? 'es' : 'en';
+      applyI18n();
+    });
+
     function appendUser(text) {
       const node = tplUser.content.cloneNode(true);
+      node.querySelector('[data-i18n-user]').textContent = i18n[currentLang].userBadge;
       node.querySelector('.msg').textContent = text;
       chat.appendChild(node);
       chat.scrollTop = chat.scrollHeight;
@@ -123,48 +182,39 @@
 
     function appendLoading() {
       const node = tplLoading.content.cloneNode(true);
+      node.querySelector('[data-i18n-loading]').textContent = i18n[currentLang].loading;
       chat.appendChild(node);
       chat.scrollTop = chat.scrollHeight;
-      return chat.lastElementChild; // referencia para reemplazar
+      return chat.lastElementChild;
     }
 
     function appendBot(answerText, citations) {
       const node = tplBot.content.cloneNode(true);
-
-      // 1) Pinta la respuesta "limpia": quitamos el bloque final "Fuentes: ..."
       const cleaned = (answerText || "").replace(/\n+Fuentes:\s*([\s\S]*)$/i, '').trim();
       node.querySelector('.answer').innerText = cleaned || ' ';
 
-      // 2) Fuentes: pinta [n] nombre_de_archivo
       const ul = node.querySelector('.sources');
       (citations || []).forEach((c, i) => {
         const li = document.createElement('li');
-        const name = (c && c.file_name)
-          ? String(c.file_name)
+        const name = (c && c.source_path)
+          ? String(c.source_path).replace(/^file:\/\//,'').split('/').pop()
           : '<unknown>';
         li.textContent = `[${i+1}] ${name}`;
         ul.appendChild(li);
       });
 
-      // 3) Citations JSON pretty (exactamente como ask_local.py)
       const pre = node.querySelector('.citations-json');
-      try {
-        pre.textContent = JSON.stringify(citations || [], null, 2);
-      } catch {
-        pre.textContent = '[]';
-      }
+      try { pre.textContent = JSON.stringify(citations || [], null, 2); }
+      catch { pre.textContent = '[]'; }
 
-      // 4) UX: si hay citas, abrir el <details> por defecto
-    //   if ((citations || []).length > 0) {
-    //     const details = node.querySelector('details.sources-citations');
-    //     if (details) details.open = true;
-    //   }
+      node.querySelector('[data-i18n-summary]').textContent = i18n[currentLang].summary;
+      node.querySelector('[data-i18n-sources-label]').textContent = i18n[currentLang].sourcesLabel;
+      node.querySelector('[data-i18n-citations-label]').textContent = i18n[currentLang].citationsLabel;
 
       chat.appendChild(node);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    // Shift+Enter = salto de línea; Enter = enviar
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -198,28 +248,25 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
-        // El backend devuelve { answer: "...Fuentes:\n[...]...", citations: [...] }
         chat.removeChild(loadingEl);
         appendBot(data.answer || '', data.citations || []);
       } catch (err) {
         chat.removeChild(loadingEl);
-        appendBot(
-          "Lo siento, hubo un error al llamar a la API. Revisa que el servidor esté activo y CORS habilitado.",
-          []
-        );
+        appendBot(i18n[currentLang].apiError, []);
         console.error(err);
       } finally {
         btn.disabled = false;
       }
     });
 
-    // Autoresize del textarea
     const autoSize = () => {
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     };
     input.addEventListener('input', autoSize);
     autoSize();
+
+    applyI18n();
   </script>
 </body>
 </html>
