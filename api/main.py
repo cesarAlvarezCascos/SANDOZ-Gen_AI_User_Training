@@ -4,12 +4,13 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
 from src.search_kb import search_kb
+from src.memory import SessionMemory
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
-
+memory = SessionMemory(max_turns=3)
 # Habilita CORS para permitir que el frontend se comunique con la API
 app.add_middleware(
     CORSMiddleware,
@@ -52,28 +53,26 @@ def format_citations(passages):
 # Main Endpoint
 @app.post("/ask")
 def ask(req: Ask):
-    # search_kb(query, top_k=8) expects an integer as the second arg.
-    # Passing req.role (a string) was accidental and caused errors like
-    # `invalid input syntax for type bigint: "analystanalyst"` because
-    # the string was multiplied/used where an int (LIMIT) was expected.
+    user_id = req.user_id or "anonymous"
 
-    # RETRIEVAL
-    passages = search_kb(req.query) # This return the Citations JSON defined in search_kb.fuse()
-    if not passages:
+    # Retrieve memory history
+    past_turns = memory.get(user_id)
+    context_history = "\n".join(
+        [f"Q: {t['query']}\nA: {t['answer']}" for t in past_turns]
+    )
+
+    # Retrieve relevant knowledge base snippets
+    passages = search_kb(req.query)
+    if len(passages) == 0 :
         return {"answer": "I didn’t find any relevant matches in the database.", "citations": []}
-    elif len(passages) < 2:
-        return {
-            "answer": "I’m not 100% sure; I need more sources or material.",
-            "citations": passages
-        }
 
-    # PROPMT CONSTRUCTION:
-        # AUGMENTATION
+    # Build the augmented prompt
     ctx = "\n\n".join([f"[{i+1}] {p['snippet']}" for i, p in enumerate(passages[:6])])
     prompt = (
         f"{SYSTEM}\n\n"
+        f"Conversation history:\n{context_history or '(none)'}\n\n"
         f"User’s question: {req.query}\n\n"
-        "Relevant passages (use [n] to cite them in your answer):\n"
+        f"Relevant passages (use [n] to cite them in your answer):\n"
         f"{ctx}\n\n"
         "Instructions:\n"
         "- Summarise and answer in no more than 180 words.\n"
@@ -83,33 +82,24 @@ def ask(req: Ask):
         "- Include at least two citations if there are ≥ 2 passages.\n"
     )
 
-    # Call LLM
-        # GENERATION
+    # Generate with OpenAI
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",  
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
         )
         text = resp.choices[0].message.content.strip()
     except Exception as e:
-        text = (
-            "No estoy 100% segura: error al generar la respuesta "
-            f"({type(e).__name__}). Revisa la API key o el modelo."
-        )
+        text = f"Error generating response: {type(e).__name__}."
 
-    # Si el modelo desobedece y añade su propio bloque "Fuentes:", límpialo
-    text = re.sub(
-        r"\n+Fuentes:\s*(?:\[[^\]]+\].*|\S.*)+$",
-        "",
-        text,
-        flags=re.IGNORECASE | re.DOTALL
-    )
-
-    # Heurística: fuerza al menos dos citaciones si hay pasajes suficientes
+    # Clean and finalize
+    text = re.sub(r"\n+Fuentes:\s*(?:\[[^\]]+\].*|\S.*)+$", "", text, flags=re.IGNORECASE | re.DOTALL)
     if text.count('[') < 2 and len(passages) >= 2:
         text += " [1][2]"
 
-    return {
-        "answer": text + "\n\nFuentes:\n" + format_citations(passages[:6]),
-        "citations": passages[:6]
-    }
+    final_answer = text + "\n\nFuentes:\n" + format_citations(passages[:6])
+
+    # Save to memory
+    memory.add(user_id, req.query, text)
+
+    return {"answer": final_answer, "citations": passages[:6]}

@@ -62,7 +62,7 @@ def keyword_search(query, k=12):
     
 
 
-def fuse(vec_hits, key_hits, alpha=0.6, top=8):
+def fuse(vec_hits, key_hits, alpha=0.6, top=8, relevance_threshold=0.1):
     """
     Combine vector search and keyword search scores using a weighted fusion.
     alpha controls the weight given to vector similarity.
@@ -79,6 +79,11 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
         if cid not in M:
             M[cid] = (txt, filename, did, page_num, pdf_url)
         S[cid] += (1 - alpha) * float(sc)
+
+    # Apply relevance threshold
+    S = {cid: score for cid, score in S.items() if score >= relevance_threshold}
+    if len(S) == 0:
+        return []
 
     ranked = sorted(S.items(), key=lambda x: x[1], reverse=True)[:top]
 
