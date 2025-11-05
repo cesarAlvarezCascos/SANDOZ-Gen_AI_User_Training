@@ -65,8 +65,8 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
     Combine vector search and keyword search scores using a weighted fusion.
     alpha controls the weight given to vector similarity.
     """
-    S = defaultdict(float) # Weighted sum of scores per doc
-    M = {}  # chunk snippet (txt) and route (url) for each doc (did)
+    S = defaultdict(float) # Weighted sum of scores per chunk
+    M = {}  # chunk snippet (txt), source doc (filename), doc id (did) and page number (page_num) for each chunk
 
     for (cid, txt, did, filename, page_num, sc) in vec_hits:
         if cid not in M:
@@ -79,6 +79,8 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
         S[cid] += (1 - alpha) * float(sc)
 
     ranked = sorted(S.items(), key=lambda x: x[1], reverse=True)[:top]
+
+    # Return the info we want in the Citations JSON
     return [
         {
             # Ensure values are JSON-serializable (UUIDs -> str)

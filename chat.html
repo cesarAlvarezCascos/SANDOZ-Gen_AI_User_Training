@@ -196,10 +196,11 @@
       const ul = node.querySelector('.sources');
       (citations || []).forEach((c, i) => {
         const li = document.createElement('li');
-        const name = (c && c.source_path)
-          ? String(c.source_path).replace(/^file:\/\//,'').split('/').pop()
+        const name = (c && c.file_name)
+          ? String(c.file_name)
           : '<unknown>';
-        li.textContent = `[${i+1}] ${name}`;
+        const page = c.page_number ? ` (pg. ${c.page_number})` : '';
+        li.textContent = `[${i+1}] ${name}${page}`;
         ul.appendChild(li);
       });
 

@@ -40,13 +40,11 @@ SYSTEM = (
 def format_citations(passages):
     lines = []
     for i, p in enumerate(passages, start=1):
-        # Be defensive: some passages might not have a source_path (None).
-        sp = p.get("source_path") if isinstance(p, dict) else None
-        if not sp:
-            name = "<unknown>"
+        filename = p.get("file_name") if isinstance(p, dict) else None
+        if not filename:
+            name = "<unknown>"  # placeholder
         else:
-            # strip file:// then take basename
-            name = os.path.basename(str(sp).replace("file://", ""))
+            name = filename
         lines.append(f"[{i}] {name}")
     return "\n".join(lines)
 
@@ -60,7 +58,7 @@ def ask(req: Ask):
     # the string was multiplied/used where an int (LIMIT) was expected.
 
     # RETRIEVAL
-    passages = search_kb(req.query)
+    passages = search_kb(req.query) # This return the Citations JSON defined in search_kb.fuse()
     if not passages:
         return {"answer": "I didn’t find any relevant matches in the database.", "citations": []}
     elif len(passages) < 2:
