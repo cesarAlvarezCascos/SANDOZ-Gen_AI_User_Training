@@ -18,7 +18,7 @@ __pycache__/
 *.pem
 
 # Datos locales / binarios
-# pdfs/
+pdfs/
 data/
 *.sqlite
 *.db

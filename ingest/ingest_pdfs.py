@@ -3,6 +3,7 @@ import os
 import hashlib
 import numpy as np
 import shutil
+from supabase import create_client
 
 # Add project root to sys.path so 'src' can be imported
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -23,6 +24,51 @@ from src.classification import init_topic_classifier_from_db, assign_topics_to_c
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 conn = psycopg.connect(os.getenv("DATABASE_URL"))
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # key con permisos de escritura, para subir pdfs a Supabase Storage
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+# Upload PDF docs to Supabase
+def upload_pdf_to_supabase(pdf_path):
+    bucket_name = "pdfs"
+    file_name = os.path.basename(pdf_path)
+    
+    with open(pdf_path, "rb") as f:
+        data = f.read()
+
+    # Overwrite if existing
+    try: 
+        res = supabase.storage.from_(bucket_name).upload(
+            path = file_name, 
+            file = data, 
+            file_options = {"cache-control": "3600", "upsert": "true", "content-type": "application/pdf"}
+            )
+    
+    except Exception as e:
+        print(f"[ERROR] Failed to upload {file_name} to Supabase: {e}")
+        return None
+
+    # Generate public or signed URL
+    try:
+        # url = supabase.storage.from_(bucket_name).get_public_url(file_name).get("publicUrl")
+        url = supabase.storage.from_(bucket_name).get_public_url(file_name)
+        return url
+    except Exception as e:
+        print(f"[ERROR] Failed to get public URL for {file_name}: {e}")
+        return None
+
+# Delete from Supabase Storage
+def delete_from_supabase(file_name):
+    if file_name:
+        bucket_name = "pdfs"
+        res = supabase.storage.from_(bucket_name).remove([file_name])
+        if res.get("error"):
+            print(f"[ERROR] Could not delete {file_name} from Supabase: {res['error']}")
+        else:
+            print(f"[DELETE] {file_name} removed from Supabase")
+
 
 # DOCUMENT HASH
 def compute_pdf_hash(pdf_path):
@@ -110,16 +156,21 @@ def delete_document_cascade(doc_id, pdf_path=None):
         archived_path = archive_old_version(pdf_path)
         tqdm.write(f"[ARCHIVE] Moved old file to: {archived_path}")
 
+    # Delete from Supabase Storage
+    if pdf_path:
+        delete_from_supabase(os.path.basename(pdf_path))
+
+
 
 # Database helpers
     # Insert doc in table 'documents' and return doc ID
-def upsert_document(file_name, body, content_hash, embedding_avg):
+def upsert_document(file_name, body, content_hash, embedding_avg, pdf_url):
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO documents (file_name, body, content_hash, embedding_avg)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO documents (file_name, body, content_hash, embedding_avg, pdf_url)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
-        """, (file_name, body, content_hash, embedding_avg))
+        """, (file_name, body, content_hash, embedding_avg, pdf_url))
         doc_id = cur.fetchone()[0]
     conn.commit()
     return doc_id
@@ -242,7 +293,8 @@ def ingest_documents(data_dir: str):
 
         # 7: Insert New / Updated Document
         body = "\n".join([c.page_content for c in chunks])
-        doc_id = upsert_document(file_name, body, content_hash, embedding_avg)
+        pdf_url = upload_pdf_to_supabase(pdf_path)  # generate URL for that document stored in our Supabase storage bucket 
+        doc_id = upsert_document(file_name, body, content_hash, embedding_avg, pdf_url)
 
         # 8: Insert chunk and chunk_embeddings
         for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
@@ -262,7 +314,8 @@ def ingest_documents(data_dir: str):
     init_topic_classifier_from_db()  # Train/Load Model
     
     print("[INFO] Assigning topics to chunks...")
-    assign_topics_to_chunks(overwrite=True)  # Classify all chunks
+    # assign_topics_to_chunks(overwrite=True)  # Classify all chunks
+    assign_topics_to_chunks(overwrite=False)
     
     # Final Summary
     print(f"\n{'='*60}")

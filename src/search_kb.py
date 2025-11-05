@@ -26,6 +26,7 @@ def vector_search(qvec, k=12):
                 d.id AS document_id,
                 d.file_name,
                 c.page_number,
+                d.pdf_url,
                 1 - (ce.embedding <=> %s::vector) AS vscore
             FROM chunk_embeddings ce
             JOIN chunks c ON ce.chunk_id = c.id
@@ -49,6 +50,7 @@ def keyword_search(query, k=12):
                 d.id AS document_id,
                 d.file_name,
                 c.page_number,
+                d.pdf_url,
                 similarity(c.body, %s) AS kscore
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
@@ -68,14 +70,14 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
     S = defaultdict(float) # Weighted sum of scores per chunk
     M = {}  # chunk snippet (txt), source doc (filename), doc id (did) and page number (page_num) for each chunk
 
-    for (cid, txt, did, filename, page_num, sc) in vec_hits:
+    for (cid, txt, did, filename, page_num, pdf_url, sc) in vec_hits:
         if cid not in M:
-            M[cid] = (txt, filename, did, page_num)
+            M[cid] = (txt, filename, did, page_num, pdf_url)
         S[cid] += alpha * float(sc)
 
-    for (cid, txt, did, filename, page_num, sc) in key_hits:
+    for (cid, txt, did, filename, page_num, pdf_url, sc) in key_hits:
         if cid not in M:
-            M[cid] = (txt, filename, did, page_num)
+            M[cid] = (txt, filename, did, page_num, pdf_url)
         S[cid] += (1 - alpha) * float(sc)
 
     ranked = sorted(S.items(), key=lambda x: x[1], reverse=True)[:top]
@@ -87,7 +89,8 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8):
             "chunk_id": str(cid),
             "file_name": str(M[cid][1]),
             "document_id": str(M[cid][2]),
-            "page_number": M[cid][3],
+            "page_number": (M[cid][3] + 1) if M[cid][3] is not None else None,
+            "pdf_url": M[cid][4],
             "snippet": M[cid][0][:600],
             "score": float(s)
         }

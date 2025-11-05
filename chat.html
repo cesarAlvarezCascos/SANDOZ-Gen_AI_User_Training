@@ -200,7 +200,14 @@
           ? String(c.file_name)
           : '<unknown>';
         const page = c.page_number ? ` (pg. ${c.page_number})` : '';
-        li.textContent = `[${i+1}] ${name}${page}`;
+        const url = c.pdf_url ? `${c.pdf_url}#page=${c.page_number}` : '#';
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = "_blank";
+        a.textContent = `[${i+1}] ${name}${page}`;
+        // li.textContent = `[${i+1}] ${name}${page}`;
+        li.appendChild(a);
         ul.appendChild(li);
       });
 
