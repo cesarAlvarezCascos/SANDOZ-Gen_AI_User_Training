@@ -100,6 +100,6 @@ def ask(req: Ask):
     final_answer = text + "\n\nFuentes:\n" + format_citations(passages[:6])
 
     # Save to memory
-    memory.add(user_id, req.query, final_answer)
+    memory.add(user_id, req.query, text)
 
     return {"answer": final_answer, "citations": passages[:6]}
