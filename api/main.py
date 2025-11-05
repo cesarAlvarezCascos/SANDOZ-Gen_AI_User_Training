@@ -63,7 +63,7 @@ def ask(req: Ask):
 
     # Retrieve relevant knowledge base snippets
     passages = search_kb(req.query)
-    if not passages:
+    if len(passages) == 0 :
         return {"answer": "I didn’t find any relevant matches in the database.", "citations": []}
 
     # Build the augmented prompt
