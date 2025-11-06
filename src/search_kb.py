@@ -56,27 +56,45 @@ def vector_search(qvec, k=12, topic_name=None):
 
 
 
-def keyword_search(query, k=12):
+def keyword_search(query, k=12, topic_id=None):
     """
     Perform keyword-based search using pg_trgm similarity between query text 
-    and chunks. Returns the top-k matches (most relevant chunks).
+    and chunks. If a topic_id is provided, restrict search to that topic.
     """
     with conn.cursor() as cur:
-        cur.execute("""
-            SELECT 
-                c.id AS chunk_id,
-                c.body AS chunk_text,
-                d.id AS document_id,
-                d.file_name,
-                c.page_number,
-                d.pdf_url,
-                similarity(c.body, %s) AS kscore
-            FROM chunks c
-            JOIN documents d ON c.document_id = d.id
-            WHERE similarity(c.body, %s) > 0.1
-            ORDER BY kscore DESC
-            LIMIT %s;
-        """, (query, query, k))
+        if topic_id:
+            cur.execute("""
+                SELECT 
+                    c.id AS chunk_id,
+                    c.body AS chunk_text,
+                    d.id AS document_id,
+                    d.file_name,
+                    c.page_number,
+                    d.pdf_url,
+                    similarity(c.body, %s) AS kscore
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE c.topic_id = %s
+                AND similarity(c.body, %s) > 0.1
+                ORDER BY kscore DESC
+                LIMIT %s;
+            """, (query, topic_id, query, k))
+        else:
+            cur.execute("""
+                SELECT 
+                    c.id AS chunk_id,
+                    c.body AS chunk_text,
+                    d.id AS document_id,
+                    d.file_name,
+                    c.page_number,
+                    d.pdf_url,
+                    similarity(c.body, %s) AS kscore
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE similarity(c.body, %s) > 0.1
+                ORDER BY kscore DESC
+                LIMIT %s;
+            """, (query, query, k))
         return cur.fetchall()
     
 
@@ -163,6 +181,6 @@ def search_kb(query: str, top_k: int = 8):
     topic_id, topic_name = topic if topic else (None, None)
     qvec = _embed(query)
     vec_hits = vector_search(qvec, k=top_k * 2, topic_name=topic_name)
-    key_hits = keyword_search(query, k=top_k * 2)
+    key_hits = keyword_search(query, k=top_k * 2, topic_id=topic_id)
     results = fuse(vec_hits, key_hits, alpha=0.6, top=top_k)
     return results
