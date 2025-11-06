@@ -30,44 +30,29 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # key con permisos de escritura
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-# Upload PDF docs to Supabase
-def upload_pdf_to_supabase(pdf_path):
+# Download from Supabase Storage to temporary local directory
+# We need this because hashes, chunks and embeddings are computed in our machine, so it needs the file during that process
+def download_from_supabase(file_name, temp_dir="./temp_pdfs"):
     bucket_name = "pdfs"
-    file_name = os.path.basename(pdf_path)
-    
-    with open(pdf_path, "rb") as f:
-        data = f.read()
 
-    # Overwrite if existing
-    try: 
-        res = supabase.storage.from_(bucket_name).upload(
-            path = file_name, 
-            file = data, 
-            file_options = {"cache-control": "3600", "upsert": "true", "content-type": "application/pdf"}
-            )
-    
-    except Exception as e:
-        print(f"[ERROR] Failed to upload {file_name} to Supabase: {e}")
-        return None
+    # Create temp dir if not existing
+    os.makedirs(temp_dir, exist_ok=True)
+    local_path = os.path.join(temp_dir, file_name)
 
-    # Generate public or signed URL
     try:
-        # url = supabase.storage.from_(bucket_name).get_public_url(file_name).get("publicUrl")
-        url = supabase.storage.from_(bucket_name).get_public_url(file_name)
-        return url
+        # Download file
+        res = supabase.storage.from_(bucket_name).download(file_name)
+
+        # Save temporarly
+        with open(local_path, 'wb') as f:
+            f.write(res)
+
+        return local_path
+
     except Exception as e:
-        print(f"[ERROR] Failed to get public URL for {file_name}: {e}")
+        print(f"[ERROR] Failed to download {file_name}: {e}")
         return None
 
-# Delete from Supabase Storage
-def delete_from_supabase(file_name):
-    if file_name:
-        bucket_name = "pdfs"
-        res = supabase.storage.from_(bucket_name).remove([file_name])
-        if res.get("error"):
-            print(f"[ERROR] Could not delete {file_name} from Supabase: {res['error']}")
-        else:
-            print(f"[DELETE] {file_name} removed from Supabase")
 
 
 # DOCUMENT HASH
@@ -87,23 +72,32 @@ def hash_exists(content_hash):
         return cur.fetchone()
     
 
-def archive_old_version(pdf_path):
-    """Move old PDF (when it has been replaced by an updated version) to folder /pdfs/archived/"""
+def archive_old_version(file_name):
+    """Move old PDF (when it has been replaced by an updated version) to folder /pdfs/archived/ in Supabase Storage bucket"""
 
-    archive_dir = os.path.join(os.path.dirname(pdf_path), "archived")
-    os.makedirs(archive_dir, exist_ok=True)
+    bucket_name = "pdfs"
+
+    try:
+        # 1. Download actual file
+        res = supabase.storage.from_(bucket_name).download(file_name)
+
+        # 2. Upload actual file to archived/ 
+        archived_path = f"archived/{file_name}"
+        supabase.storage.from_(bucket_name).upload(
+            path = archived_path,
+            file = res,
+            file_options = {"content-type": "application/pdf", "upsert": "true" }
+            )
+        
+        # 3. Delete original file (from root pdfs/)
+        supabase.storage.from_(bucket_name).remove([file_name])
+
+        print(f"[ARCHIVED] Moved {file_name} to archived/ in bucket Storage")
+        return archived_path
     
-    dest = os.path.join(archive_dir, os.path.basename(pdf_path))
-    
-    # If already existing in archived, add timestamp
-    if os.path.exists(dest):
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name, ext = os.path.splitext(os.path.basename(pdf_path))
-        dest = os.path.join(archive_dir, f"{name}_{timestamp}{ext}")
-    
-    shutil.move(pdf_path, dest)
-    return dest
+    except Exception as e:
+        print(f"[ERROR] Failed to archive {file_name} in Storage: {e}")
+        return None
 
 
 def find_similar_document(embedding_avg, file_name, threshold=0.95):
@@ -133,7 +127,7 @@ def find_similar_document(embedding_avg, file_name, threshold=0.95):
         return None
     
 
-def delete_document_cascade(doc_id, pdf_path=None):
+def delete_document_cascade(doc_id, file_name=None, should_archive = False):
     """ Deletes document and all its associated chunks/embeddings"""
     with conn.cursor() as cur:
         # 1st delete chunk_embeddings
@@ -151,14 +145,9 @@ def delete_document_cascade(doc_id, pdf_path=None):
         cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
     conn.commit()
 
-    # Delete from /pdfs
-    if pdf_path and os.path.exists(pdf_path):
-        archived_path = archive_old_version(pdf_path)
-        tqdm.write(f"[ARCHIVE] Moved old file to: {archived_path}")
-
-    # Delete from Supabase Storage
-    if pdf_path:
-        delete_from_supabase(os.path.basename(pdf_path))
+    # Delete from /pdfs 
+    if file_name and should_archive:
+        archive_old_version(file_name)
 
 
 
@@ -197,33 +186,60 @@ def insert_chunk_embedding(chunk_id, embedding):
     conn.commit()
 
 
-def sync_deletions(pdf_files):
+def sync_deletions():
     """
-    Delete from Database documents that have been removed from /pdfs
+    Delete from Database documents that have been removed from /pdfs (in bucket Supabase Storage)
     So if a PDF is manually deleted from the folder, it won't be used to generate answers
     """
+    bucket_name = "pdfs"
+
+    # List files in Storage pdfs/
+    try:
+        storage_files = supabase.storage.from_(bucket_name).list()
+        # Only in root pdfs/ (not in pdfs/archived)
+        existing_names = {
+            f['name'] for f in storage_files 
+            if f['name'].endswith('.pdf') and not f['name'].startswith('archived/')
+        }
+    except Exception as e:
+        print(f"[ERROR] Could not list Storage files: {e}")
+        return 0
+
+
     with conn.cursor() as cur:
         cur.execute("SELECT id, file_name FROM documents")
         db_files = cur.fetchall()
     
-    existing_names = {Path(p).name for p in pdf_files}
     
     deleted_count = 0
     for doc_id, file_name in db_files:
         if file_name not in existing_names:
             tqdm.write(f"[SYNC DELETE] Removing '{file_name}' from database (file no longer exists)")
-            delete_document_cascade(doc_id)
+            delete_document_cascade(doc_id, file_name)
             deleted_count += 1
     
     return deleted_count
 
 
 
-# INGESTION PIPELINE 
-def ingest_documents(data_dir: str):
+# INGESTION PIPELINE (reading PDFs files from Supabase Storage)
+def ingest_documents():
 
-    pdf_files = glob.glob(os.path.join(data_dir, '**', '*.pdf'), recursive=True)
-    print(f"[INFO] Found {len(pdf_files)} PDF files in directory.")
+    bucket_name = "pdfs"
+    # List files in bucket Storage
+    try:
+        storage_files = supabase.storage.from_(bucket_name).list()
+        # Filter only those in root /pdfs (not in archived/)
+        pdf_files = [
+            f['name'] for f in storage_files
+            if f['name'].endswith('.pdf') and not f['name'].startswith('archived/')
+        ]
+
+    except Exception as e:
+        print(f"[ERROR] Could not list Storage: {e}")
+        return
+
+    print(f"[INFO] Found {len(pdf_files)} PDF files in Storage bucket '{bucket_name}.")
 
     if not pdf_files:
         print("[INFO] No PDF files to process.")
@@ -242,9 +258,19 @@ def ingest_documents(data_dir: str):
     # Initialize pipeline
     emb_pipe = EmbeddingPipeline(client)
 
+    # Create temp directory
+    temp_dir = "./temp_pdfs"
+    os.makedirs(temp_dir, exist_ok=True)
+
     # Process each doc individually
-    for pdf_path in tqdm(pdf_files, desc="Processing PDFs", unit="file"):
-        file_name = Path(pdf_path).name
+    for file_name in tqdm(pdf_files, desc="Processing PDFs", unit="file"):
+
+        # Download PDF temporarily, so we can compute hashes, embeddings, etc (our machine needs those files)
+        pdf_path = download_from_supabase(file_name, temp_dir)
+        if not pdf_path:
+            tqdm.write(f"[ERROR] Could not download '{file_name}'")
+            continue
+
 
         # 1: Compute hash of content
         content_hash = compute_pdf_hash(pdf_path)
@@ -254,6 +280,7 @@ def ingest_documents(data_dir: str):
         if existing:
             tqdm.write(f"[SKIP] '{file_name}' is exact duplicate of '{existing[1]}'")
             skipped_identical += 1
+            os.remove(pdf_path)  # Clean temp
             continue
 
         # 3: Load and process PDF file
@@ -280,20 +307,15 @@ def ingest_documents(data_dir: str):
             # It is an UPDATED DOC
             old_id, old_name, similarity = similar
             tqdm.write(f"[UPDATE] '{file_name}' is updated version of '{old_name}' (similarity: {similarity:.3f})")
-
-            old_pdf_path = None
-            for pdf in pdf_files:
-                if Path(pdf).name == old_name:
-                    old_pdf_path = pdf
-                    break
-
             tqdm.write(f"[DELETE] Removing old version '{old_name}'...")
-            delete_document_cascade(old_id, old_pdf_path)
+            delete_document_cascade(old_id, old_name, should_archive=True)
             updated += 1
+
 
         # 7: Insert New / Updated Document
         body = "\n".join([c.page_content for c in chunks])
-        pdf_url = upload_pdf_to_supabase(pdf_path)  # generate URL for that document stored in our Supabase storage bucket 
+            # URL that points to the document in the bucket Storage
+        pdf_url = f"{SUPABASE_URL}/storage/v1/object/public/{bucket_name}/{file_name}"
         doc_id = upsert_document(file_name, body, content_hash, embedding_avg, pdf_url)
 
         # 8: Insert chunk and chunk_embeddings
@@ -305,17 +327,20 @@ def ingest_documents(data_dir: str):
         tqdm.write(f"[DONE] Uploaded '{file_name}' with {len(chunks)} chunks")
         uploaded += 1
 
+        # Clean temp dir
+        os.remove(pdf_path)
+
     # 9: check for deleted files
     print("\n[INFO] Checking for deleted files...")
-    deleted = sync_deletions(pdf_files)
+    deleted = sync_deletions()
 
-    # 10: assign topics to chunks and propagate to documents
+    # 10: Assign topics to chunks and propagate to documents
     print("[INFO] Initializing topics classifier...")
     init_topic_classifier_from_db()  # Train/Load Model
     
     print("[INFO] Assigning topics to chunks...")
     # assign_topics_to_chunks(overwrite=True)  # Classify all chunks
-    assign_topics_to_chunks(overwrite=False)
+    assign_topics_to_chunks(overwrite=False)  # False because we dont want to reassign already assigned topic to already ingested chunks
     
     # Final Summary
     print(f"\n{'='*60}")
@@ -326,7 +351,10 @@ def ingest_documents(data_dir: str):
     print(f"  🗑️  Files deleted from DB: {deleted}")
     print(f"{'='*60}")
 
+    # Clean temporary directory
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+
 
 if __name__ == "__main__":
-    base_dir = os.getenv("PDF_FOLDER_PATH", os.path.join(os.path.dirname(__file__), "..", "pdfs"))
-    ingest_documents(base_dir)
+    ingest_documents()  # We don't need base_dir as before
