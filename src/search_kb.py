@@ -144,6 +144,7 @@ def detect_topic(query: str):
     """
     Checks if the user's question contains any keyword from the 'topics.key_words' column.
     Returns (id, name) of the most relevant topic if matched, or None if there is no match.
+    Returns a list of topics 
     """
     with conn.cursor() as cur:
         # We only select the columns we need
@@ -166,19 +167,39 @@ def detect_topic(query: str):
             best_match_count = match_count
             matched_topic = (tid, name)
 
-    # Return the best match, or None if no keywords matched
-    return matched_topic if best_match_count > 0 else None
-#topic_id and topic_name in a tuple for matched_topic
+    # if no topic detected, all are return so the user chooses
+    if best_match_count == 0:
+        all_topics = [{"name": name} for _, name, _ in topics]
+        return None, all_topics
+
+    return matched_topic, []
 
 
-def search_kb(query: str, top_k: int = 8):
+def search_kb(query: str, top_k: int = 8, selected_topic_name: str | None = None):
     """
     0. Detect topic (if any)
     1. Embed query → vector search
     2. Keyword search → fuse both
     """
-    topic = detect_topic(query)
-    topic_id, topic_name = topic if topic else (None, None)
+    if selected_topic_name:
+        # the user selects manually a topic because detect_topic fails
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM topics WHERE name = %s", (selected_topic_name,))
+            row = cur.fetchone()
+            topic_id = row[0] if row else None
+            topic_name = selected_topic_name if row else None
+    else:
+        # try to detect topic using detect_topic
+        matched_topic, all_topics = detect_topic(query)
+        if matched_topic is None:
+            # if no topic selected → frontend must ask
+            return {
+                "status": "choose_topic",
+                "message": "A topic has not been detected. Please, select one of the following topics.",
+                "topics": all_topics
+            }
+        topic_id, topic_name = matched_topic
+
     qvec = _embed(query)
     vec_hits = vector_search(qvec, k=top_k * 2, topic_name=topic_name)
     key_hits = keyword_search(query, k=top_k * 2, topic_id=topic_id)

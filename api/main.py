@@ -28,6 +28,7 @@ class Ask(BaseModel):
     product_version: str | None = None
     time_budget: int | None = 30
     level: int | None = 2
+    selected_topic_name: str | None = None
 
 # LLM instructions
 SYSTEM = (
@@ -61,9 +62,13 @@ def ask(req: Ask):
         [f"Q: {t['query']}\nA: {t['answer']}" for t in past_turns]
     )
 
+    search_result = search_kb(req.query, selected_topic_name=req.selected_topic_name)
+    if isinstance(search_result, dict) and search_result.get("status") == "choose_topic":
+        return search_result # user selects topic
+
     # Retrieve relevant knowledge base snippets
-    passages = search_kb(req.query)
-    if len(passages) == 0 :
+    passages = search_result
+    if not passages:
         return {"answer": "I didn’t find any relevant matches in the database.", "citations": []}
 
     # Build the augmented prompt

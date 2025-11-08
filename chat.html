@@ -230,6 +230,52 @@
       }
     });
 
+    function showTopicOptions(topics, originalQuery) {
+      const container = document.createElement('div');
+      container.className = 'flex flex-wrap mt-2 gap-2';
+      topics.forEach(t => {
+        const btn = document.createElement('button');
+        btn.textContent = t.name;
+        btn.className = 'topic-btn';
+        btn.onclick = () => sendSelectedTopic(originalQuery, t.name, container);
+        container.appendChild(btn);
+      });
+      chat.appendChild(container);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendSelectedTopic(query, topicName, container) {
+      container.remove(); // quitar botones
+      appendUser(`Selected topic: ${topicName}`);
+      const loadingEl = appendLoading();
+      btn.disabled = true;
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role: 'analyst',
+            query,
+            time_budget: 30,
+            level: 2,
+            selected_topic_name: topicName 
+          })
+        });
+        const data = await res.json();
+        chat.removeChild(loadingEl);
+        appendBot(data.answer || '', data.citations || []);
+      } catch (err) {
+        chat.removeChild(loadingEl);
+        appendBot(i18n[currentLang].apiError, []);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+
+
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const text = input.value.trim();
@@ -257,7 +303,13 @@
         const data = await res.json();
 
         chat.removeChild(loadingEl);
-        appendBot(data.answer || '', data.citations || []);
+
+        if (data.status === 'choose_topic') {
+          showTopicOptions(data.topics, text);
+        } else {
+          appendBot(data.answer || '', data.citations || []);
+        }
+
       } catch (err) {
         chat.removeChild(loadingEl);
         appendBot(i18n[currentLang].apiError, []);
