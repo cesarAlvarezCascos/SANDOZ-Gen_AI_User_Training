@@ -236,7 +236,7 @@
       topics.forEach(t => {
         const btn = document.createElement('button');
         btn.textContent = t.name;
-        btn.className = 'topic-btn';
+        btn.className = 'bg-indigo-600 text-white px-3 py-1.5 rounded-xl text-sm font-medium hover:bg-indigo-700 transition cursor-pointer';
         btn.onclick = () => sendSelectedTopic(originalQuery, t.name, container);
         container.appendChild(btn);
       });

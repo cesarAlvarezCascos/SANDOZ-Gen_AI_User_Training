@@ -32,7 +32,7 @@ def vector_search(qvec, k=12, topic_name=None):
                 FROM chunk_embeddings ce
                 JOIN chunks c ON ce.chunk_id = c.id
                 JOIN documents d ON c.document_id = d.id
-                WHERE %s = ANY(d.topic)
+                WHERE c.topic_id = %s
                 ORDER BY ce.embedding <=> %s::vector
                 LIMIT %s;
             """, (qvec, topic_name, qvec, k))
