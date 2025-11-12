@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Training Agent — Chat</title>
+  <script>
+    const API_URL = "http://localhost:8000/ask";
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .scrollbar-thin::-webkit-scrollbar { width: 8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    .bubble { max-width: 80%; }
+    .msg a { text-decoration: underline; }
+    .prose pre { white-space: pre-wrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+    .btn-flag { transition: transform .15s ease; }
+    .btn-flag:active { transform: scale(0.98); }
+    
+    /* Feedback styles */
+    .feedback-buttons {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid #e2e8f0;
+    }
+    .feedback-btn {
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: 1px solid #cbd5e1;
+      background: white;
+    }
+    .feedback-btn:hover { background: #f1f5f9; }
+    .feedback-btn.selected { background: #4f46e5; color: white; border-color: #4f46e5; }
+    .feedback-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    
+    .feedback-submit-btn {
+      padding: 0.375rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+      background: #4f46e5;
+      color: white;
+      margin-left: auto;
+    }
+    .feedback-submit-btn:hover:not(:disabled) { background: #4338ca; }
+    .feedback-submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .feedback-submit-btn.sent { background: #10b981; }
+    
+    .feedback-comment {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      width: 100%;
+      display: none;
+    }
+    .feedback-comment.show { display: block; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <div class="max-w-3xl mx-auto px-4 py-6">
+    <header class="mb-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-bold">STA</div>
+          <h1 class="text-xl font-semibold">Sandoz Training Agent</h1>
+        </div>
+
+        <!-- Right: toggle + hint -->
+        <div class="flex flex-col items-end">
+          <button id="langToggle"
+            class="btn-flag inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            title="Switch language">
+            <span id="langFlag" aria-hidden="true">🇬🇧</span>
+            <span id="langLabel" class="text-slate-700">EN</span>
+          </button>
+          <div id="langHint" class="text-xs text-slate-500 mt-1"></div>
+        </div>
+      </div>
+    </header>
+
+    <main id="chat" class="bg-white rounded-2xl shadow p-4 h-[70vh] overflow-y-auto scrollbar-thin space-y-4">
+      <div class="flex gap-3 items-start">
+        <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
+        <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg">
+          <p id="welcomeText" class="text-sm">
+            Hello! I’m your Training Agent. Ask me a question, and I’ll do my best to answer.
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <form id="composer" class="mt-4 flex items-end gap-2">
+      <textarea id="input" rows="2" placeholder="Type your question… (Shift+Enter: line break)"
+        class="flex-1 rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
+      <button id="send" type="submit"
+        class="rounded-xl bg-indigo-600 text-white px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-50">Send</button>
+    </form>
+  </div>
+
+  <!-- Templates -->
+  <template id="msg-user">
+    <div class="flex gap-3 items-start justify-end">
+      <div class="bubble bg-indigo-600 text-white rounded-2xl px-4 py-3 msg"></div>
+      <div class="w-9 h-9 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center text-sm" data-i18n-user>You</div>
+    </div>
+  </template>
+
+  <template id="msg-bot">
+    <div class="flex gap-3 items-start">
+      <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
+      <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg w-full">
+        <div class="answer prose prose-sm max-w-none"></div>
+        
+        <!-- Feedback buttons -->
+        <div class="feedback-buttons">
+          <button class="feedback-btn" data-feedback="1" title="Respuesta útil">
+            👍 <span data-i18n-helpful>Útil</span>
+          </button>
+          <button class="feedback-btn" data-feedback="-1" title="Respuesta no útil">
+            👎 <span data-i18n-not-helpful>No útil</span>
+          </button>
+          <button class="feedback-submit-btn" disabled data-i18n-send-feedback>
+            Enviar feedback
+          </button>
+        </div>
+        <textarea class="feedback-comment" placeholder="¿Qué se podría mejorar? (opcional)" rows="2"></textarea>
+        
+        <details class="mt-3 sources-citations">
+          <summary class="text-xs text-slate-500 cursor-pointer" data-i18n-summary>Sources &amp; Citations</summary>
+          <div class="mt-2">
+            <div class="mono text-xs text-slate-700" data-i18n-sources-label>Sources:</div>
+            <ul class="sources list-disc pl-5 mt-1 text-xs text-slate-600"></ul>
+          </div>
+          <div class="mt-3">
+            <div class="mono text-xs text-slate-700" data-i18n-citations-label>Citations:</div>
+            <pre class="mono text-xs bg-white border border-slate-200 rounded-lg p-3 mt-1 overflow-x-auto citations-json"></pre>
+          </div>
+        </details>
+      </div>
+    </div>
+  </template>
+
+
+  <template id="msg-bot-loading">
+    <div class="flex gap-3 items-start">
+      <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
+      <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg">
+        <div class="flex items-center gap-2 text-sm text-slate-500">
+          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+          </svg>
+          <span data-i18n-loading>Generating answer…</span>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const form = document.getElementById('composer');
+    const btn = document.getElementById('send');
+
+    const tplUser = document.getElementById('msg-user');
+    const tplBot = document.getElementById('msg-bot');
+    const tplLoading = document.getElementById('msg-bot-loading');
+
+    // --- i18n (UI only) ---
+    let currentLang = 'en';
+    const i18n = {
+      en: {
+        placeholder: "Type your question… (Shift+Enter: line break)",
+        send: "Send",
+        userBadge: "You",
+        welcome: "Hello! I'm your Training Agent. Ask me a question, and I'll do my best to answer.",
+        summary: "Sources & Citations",
+        sourcesLabel: "Sources:",
+        citationsLabel: "Citations:",
+        loading: "Generating answer…",
+        apiError: "Sorry, there was an error calling the API. Make sure the server is running and CORS is enabled.",
+        hint: "You can switch language by clicking the flag.",
+        helpful: "Helpful",
+        notHelpful: "Not helpful",
+        sendFeedback: "Send feedback",
+        feedbackSent: "Sent ✓",
+        feedbackComment: "What could be improved? (optional)"
+      },
+      es: {
+        placeholder: "Escribe tu pregunta… (Shift+Enter: salto de línea)",
+        send: "Enviar",
+        userBadge: "Tú",
+        welcome: "¡Hola! Soy tu Training Agent. Pregúntame lo que quieras y haré lo posible por responder.",
+        summary: "Fuentes y Citations",
+        sourcesLabel: "Fuentes:",
+        citationsLabel: "Citations:",
+        loading: "Generando respuesta…",
+        apiError: "Lo siento, hubo un error al llamar a la API. Revisa que el servidor esté activo y CORS habilitado.",
+        hint: "Puedes cambiar el idioma clicando en la bandera.",
+        helpful: "Útil",
+        notHelpful: "No útil",
+        sendFeedback: "Enviar feedback",
+        feedbackSent: "Enviado ✓",
+        feedbackComment: "¿Qué se podría mejorar? (opcional)"
+      }
+    };
+
+
+    const langToggle = document.getElementById('langToggle');
+    const langFlag = document.getElementById('langFlag');
+    const langLabel = document.getElementById('langLabel');
+    const welcomeText = document.getElementById('welcomeText');
+    const langHint = document.getElementById('langHint');
+
+    function applyI18n() {
+      const t = i18n[currentLang];
+      document.documentElement.lang = currentLang === 'en' ? 'en' : 'es';
+      input.placeholder = t.placeholder;
+      btn.textContent = t.send;
+      welcomeText.textContent = t.welcome;
+      langHint.textContent = t.hint;
+
+      if (currentLang === 'en') { langFlag.textContent = '🇬🇧'; langLabel.textContent = 'EN'; }
+      else { langFlag.textContent = '🇪🇸'; langLabel.textContent = 'ES'; }
+
+      document.querySelectorAll('[data-i18n-summary]').forEach(el => el.textContent = t.summary);
+      document.querySelectorAll('[data-i18n-sources-label]').forEach(el => el.textContent = t.sourcesLabel);
+      document.querySelectorAll('[data-i18n-citations-label]').forEach(el => el.textContent = t.citationsLabel);
+      document.querySelectorAll('[data-i18n-loading]').forEach(el => el.textContent = t.loading);
+      document.querySelectorAll('[data-i18n-user]').forEach(el => el.textContent = t.userBadge);
+      document.querySelectorAll('[data-i18n-helpful]').forEach(el => el.textContent = t.helpful);
+      document.querySelectorAll('[data-i18n-not-helpful]').forEach(el => el.textContent = t.notHelpful);
+      document.querySelectorAll('[data-i18n-send-feedback]').forEach(el => el.textContent = t.sendFeedback);
+      document.querySelectorAll('.feedback-comment').forEach(el => el.placeholder = t.feedbackComment);
+    }
+
+
+    langToggle.addEventListener('click', () => {
+      currentLang = currentLang === 'en' ? 'es' : 'en';
+      applyI18n();
+    });
+
+    function appendUser(text) {
+      const node = tplUser.content.cloneNode(true);
+      node.querySelector('[data-i18n-user]').textContent = i18n[currentLang].userBadge;
+      node.querySelector('.msg').textContent = text;
+      chat.appendChild(node);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function appendLoading() {
+      const node = tplLoading.content.cloneNode(true);
+      node.querySelector('[data-i18n-loading]').textContent = i18n[currentLang].loading;
+      chat.appendChild(node);
+      chat.scrollTop = chat.scrollHeight;
+      return chat.lastElementChild;
+    }
+
+    function appendBot(query, answerText, citations) { //Añadir query
+      const node = tplBot.content.cloneNode(true);
+      const cleaned = (answerText || "").replace(/\n+Fuentes:\s*([\s\S]*)$/i, '').trim();
+      node.querySelector('.answer').innerText = cleaned || ' ';
+
+      const ul = node.querySelector('.sources');
+      (citations || []).forEach((c, i) => {
+        const li = document.createElement('li');
+        const name = (c && c.file_name)
+          ? String(c.file_name)
+          : '<unknown>';
+        const page = c.page_number ? ` (pg. ${c.page_number})` : '';
+        const url = c.pdf_url ? `${c.pdf_url}#page=${c.page_number}` : '#';
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = "_blank";
+        a.textContent = `[${i+1}] ${name}${page}`;
+        // li.textContent = `[${i+1}] ${name}${page}`;
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+
+      const pre = node.querySelector('.citations-json');
+      try { pre.textContent = JSON.stringify(citations || [], null, 2); }
+      catch { pre.textContent = '[]'; }
+
+      node.querySelector('[data-i18n-summary]').textContent = i18n[currentLang].summary;
+      node.querySelector('[data-i18n-sources-label]').textContent = i18n[currentLang].sourcesLabel;
+      node.querySelector('[data-i18n-citations-label]').textContent = i18n[currentLang].citationsLabel;
+
+      chat.appendChild(node);
+
+      const botMsgElement = chat.lastElementChild;
+      setupFeedbackHandlers(botMsgElement, query, cleaned, citations);
+
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        form.dispatchEvent(new Event('submit'));
+      }
+    });
+
+    function showTopicOptions(topics, originalQuery) {
+      const container = document.createElement('div');
+      container.className = 'flex flex-wrap mt-2 gap-2';
+      topics.forEach(t => {
+        const btn = document.createElement('button');
+        btn.textContent = t.name;
+        btn.className = 'bg-indigo-600 text-white px-3 py-1.5 rounded-xl text-sm font-medium hover:bg-indigo-700 transition cursor-pointer';
+        btn.onclick = () => sendSelectedTopic(originalQuery, t.name, container);
+        container.appendChild(btn);
+      });
+      chat.appendChild(container);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendSelectedTopic(query, topicName, container) {
+      container.remove(); // quitar botones
+      appendUser(`Selected topic: ${topicName}`);
+      const loadingEl = appendLoading();
+      btn.disabled = true;
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role: 'analyst',
+            query,
+            time_budget: 30,
+            level: 2,
+            selected_topic_name: topicName 
+          })
+        });
+        const data = await res.json();
+        chat.removeChild(loadingEl);
+        appendBot(query, data.answer || '', data.citations || []);
+      } catch (err) {
+        chat.removeChild(loadingEl);
+        appendBot(query, i18n[currentLang].apiError, []);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+
+
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      appendUser(text);
+      input.value = '';
+      input.style.height = 'auto';
+
+      const loadingEl = appendLoading();
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role: 'analyst',
+            query: text,
+            time_budget: 30,
+            level: 2
+          })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        chat.removeChild(loadingEl);
+
+        if (data.status === 'choose_topic') {
+          showTopicOptions(data.topics, text);
+        } else {
+          appendBot(text, data.answer || '', data.citations || []);
+        }
+
+      } catch (err) {
+        chat.removeChild(loadingEl);
+        appendBot(text, i18n[currentLang].apiError, []);
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    const autoSize = () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    };
+    input.addEventListener('input', autoSize);
+    autoSize();
+
+    applyI18n();
+
+    // Feedback button logic
+    function setupFeedbackHandlers(botMsgElement, query, answer, citations) {
+      const ratingButtons = botMsgElement.querySelectorAll('.feedback-btn');
+      const submitButton = botMsgElement.querySelector('.feedback-submit-btn');
+      const commentBox = botMsgElement.querySelector('.feedback-comment');
+      
+      let selectedRating = null;
+      
+      // Manejar selección de rating (thumbs up/down)
+      ratingButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rating = parseInt(btn.dataset.feedback);
+          selectedRating = rating;
+          
+          // Visual feedback
+          ratingButtons.forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          
+          // Habilitar botón de envío
+          submitButton.disabled = false;
+          
+          // Mostrar textarea si es negativo
+          if (rating === -1) {
+            commentBox.classList.add('show');
+          } else {
+            commentBox.classList.remove('show');
+            commentBox.value = '';
+          }
+        });
+      });
+      
+      // Manejar envío de feedback
+      submitButton.addEventListener('click', async () => {
+        if (selectedRating === null) return;
+        
+        // Deshabilitar botones mientras se envía
+        submitButton.disabled = true;
+        ratingButtons.forEach(b => b.disabled = true);
+        
+        const feedbackData = {
+          user_id: 'anonymous',
+          session_id: sessionStorage.getItem('session_id') || generateSessionId(),
+          query: query,
+          answer: answer,
+          rating: selectedRating,
+          feedback_type: 'overall',
+          comment: commentBox.value.trim() || null,
+          citations: citations
+        };
+        
+        try {
+          const res = await fetch('http://localhost:8000/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(feedbackData)
+          });
+          
+          const result = await res.json();
+          
+          if (res.ok && result.status === 'success') {
+            // Cambiar texto del botón
+            submitButton.textContent = i18n[currentLang].feedbackSent;
+            submitButton.classList.add('sent');
+            
+            // Ocultar comentario
+            commentBox.classList.remove('show');
+          } else {
+            console.error('Error al enviar feedback:', result.message);
+            alert('Error al enviar feedback. Por favor, intenta de nuevo.');
+            submitButton.disabled = false;
+            ratingButtons.forEach(b => b.disabled = false);
+          }
+        } catch (err) {
+          console.error('Error al enviar feedback:', err);
+          alert('Error de conexión. Por favor, intenta de nuevo.');
+          submitButton.disabled = false;
+          ratingButtons.forEach(b => b.disabled = false);
+        }
+      });
+    }
+
+    function generateSessionId() {
+      const id = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('session_id', id);
+      return id;
+    }
+
+
+
+  </script>
+</body>
+</html>
