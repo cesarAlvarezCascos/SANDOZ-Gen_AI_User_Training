@@ -18,6 +18,54 @@
     pre { white-space: pre-wrap; word-wrap: break-word; }
     .btn-flag { transition: transform .15s ease; }
     .btn-flag:active { transform: scale(0.98); }
+    
+    /* Feedback styles */
+    .feedback-buttons {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid #e2e8f0;
+    }
+    .feedback-btn {
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: 1px solid #cbd5e1;
+      background: white;
+    }
+    .feedback-btn:hover { background: #f1f5f9; }
+    .feedback-btn.selected { background: #4f46e5; color: white; border-color: #4f46e5; }
+    .feedback-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    
+    .feedback-submit-btn {
+      padding: 0.375rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+      background: #4f46e5;
+      color: white;
+      margin-left: auto;
+    }
+    .feedback-submit-btn:hover:not(:disabled) { background: #4338ca; }
+    .feedback-submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .feedback-submit-btn.sent { background: #10b981; }
+    
+    .feedback-comment {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      width: 100%;
+      display: none;
+    }
+    .feedback-comment.show { display: block; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
@@ -74,6 +122,21 @@
       <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm">STA</div>
       <div class="bubble bg-slate-100 rounded-2xl px-4 py-3 msg w-full">
         <div class="answer prose prose-sm max-w-none"></div>
+        
+        <!-- Feedback buttons -->
+        <div class="feedback-buttons">
+          <button class="feedback-btn" data-feedback="1" title="Respuesta útil">
+            👍 <span data-i18n-helpful>Útil</span>
+          </button>
+          <button class="feedback-btn" data-feedback="-1" title="Respuesta no útil">
+            👎 <span data-i18n-not-helpful>No útil</span>
+          </button>
+          <button class="feedback-submit-btn" disabled data-i18n-send-feedback>
+            Enviar feedback
+          </button>
+        </div>
+        <textarea class="feedback-comment" placeholder="¿Qué se podría mejorar? (opcional)" rows="2"></textarea>
+        
         <details class="mt-3 sources-citations">
           <summary class="text-xs text-slate-500 cursor-pointer" data-i18n-summary>Sources &amp; Citations</summary>
           <div class="mt-2">
@@ -88,6 +151,7 @@
       </div>
     </div>
   </template>
+
 
   <template id="msg-bot-loading">
     <div class="flex gap-3 items-start">
@@ -121,13 +185,18 @@
         placeholder: "Type your question… (Shift+Enter: line break)",
         send: "Send",
         userBadge: "You",
-        welcome: "Hello! I’m your Training Agent. Ask me a question, and I’ll do my best to answer.",
+        welcome: "Hello! I'm your Training Agent. Ask me a question, and I'll do my best to answer.",
         summary: "Sources & Citations",
         sourcesLabel: "Sources:",
         citationsLabel: "Citations:",
         loading: "Generating answer…",
         apiError: "Sorry, there was an error calling the API. Make sure the server is running and CORS is enabled.",
-        hint: "You can switch language by clicking the flag."
+        hint: "You can switch language by clicking the flag.",
+        helpful: "Helpful",
+        notHelpful: "Not helpful",
+        sendFeedback: "Send feedback",
+        feedbackSent: "Sent ✓",
+        feedbackComment: "What could be improved? (optional)"
       },
       es: {
         placeholder: "Escribe tu pregunta… (Shift+Enter: salto de línea)",
@@ -139,9 +208,15 @@
         citationsLabel: "Citations:",
         loading: "Generando respuesta…",
         apiError: "Lo siento, hubo un error al llamar a la API. Revisa que el servidor esté activo y CORS habilitado.",
-        hint: "Puedes cambiar el idioma clicando en la bandera."
+        hint: "Puedes cambiar el idioma clicando en la bandera.",
+        helpful: "Útil",
+        notHelpful: "No útil",
+        sendFeedback: "Enviar feedback",
+        feedbackSent: "Enviado ✓",
+        feedbackComment: "¿Qué se podría mejorar? (opcional)"
       }
     };
+
 
     const langToggle = document.getElementById('langToggle');
     const langFlag = document.getElementById('langFlag');
@@ -165,7 +240,12 @@
       document.querySelectorAll('[data-i18n-citations-label]').forEach(el => el.textContent = t.citationsLabel);
       document.querySelectorAll('[data-i18n-loading]').forEach(el => el.textContent = t.loading);
       document.querySelectorAll('[data-i18n-user]').forEach(el => el.textContent = t.userBadge);
+      document.querySelectorAll('[data-i18n-helpful]').forEach(el => el.textContent = t.helpful);
+      document.querySelectorAll('[data-i18n-not-helpful]').forEach(el => el.textContent = t.notHelpful);
+      document.querySelectorAll('[data-i18n-send-feedback]').forEach(el => el.textContent = t.sendFeedback);
+      document.querySelectorAll('.feedback-comment').forEach(el => el.placeholder = t.feedbackComment);
     }
+
 
     langToggle.addEventListener('click', () => {
       currentLang = currentLang === 'en' ? 'es' : 'en';
@@ -188,7 +268,7 @@
       return chat.lastElementChild;
     }
 
-    function appendBot(answerText, citations) {
+    function appendBot(query, answerText, citations) { //Añadir query
       const node = tplBot.content.cloneNode(true);
       const cleaned = (answerText || "").replace(/\n+Fuentes:\s*([\s\S]*)$/i, '').trim();
       node.querySelector('.answer').innerText = cleaned || ' ';
@@ -220,6 +300,10 @@
       node.querySelector('[data-i18n-citations-label]').textContent = i18n[currentLang].citationsLabel;
 
       chat.appendChild(node);
+
+      const botMsgElement = chat.lastElementChild;
+      setupFeedbackHandlers(botMsgElement, query, cleaned, citations);
+
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -263,10 +347,10 @@
         });
         const data = await res.json();
         chat.removeChild(loadingEl);
-        appendBot(data.answer || '', data.citations || []);
+        appendBot(query, data.answer || '', data.citations || []);
       } catch (err) {
         chat.removeChild(loadingEl);
-        appendBot(i18n[currentLang].apiError, []);
+        appendBot(query, i18n[currentLang].apiError, []);
         console.error(err);
       } finally {
         btn.disabled = false;
@@ -307,12 +391,12 @@
         if (data.status === 'choose_topic') {
           showTopicOptions(data.topics, text);
         } else {
-          appendBot(data.answer || '', data.citations || []);
+          appendBot(text, data.answer || '', data.citations || []);
         }
 
       } catch (err) {
         chat.removeChild(loadingEl);
-        appendBot(i18n[currentLang].apiError, []);
+        appendBot(text, i18n[currentLang].apiError, []);
         console.error(err);
       } finally {
         btn.disabled = false;
@@ -327,6 +411,96 @@
     autoSize();
 
     applyI18n();
+
+    // Feedback button logic
+    function setupFeedbackHandlers(botMsgElement, query, answer, citations) {
+      const ratingButtons = botMsgElement.querySelectorAll('.feedback-btn');
+      const submitButton = botMsgElement.querySelector('.feedback-submit-btn');
+      const commentBox = botMsgElement.querySelector('.feedback-comment');
+      
+      let selectedRating = null;
+      
+      // Manejar selección de rating (thumbs up/down)
+      ratingButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const rating = parseInt(btn.dataset.feedback);
+          selectedRating = rating;
+          
+          // Visual feedback
+          ratingButtons.forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          
+          // Habilitar botón de envío
+          submitButton.disabled = false;
+          
+          // Mostrar textarea si es negativo
+          if (rating === -1) {
+            commentBox.classList.add('show');
+          } else {
+            commentBox.classList.remove('show');
+            commentBox.value = '';
+          }
+        });
+      });
+      
+      // Manejar envío de feedback
+      submitButton.addEventListener('click', async () => {
+        if (selectedRating === null) return;
+        
+        // Deshabilitar botones mientras se envía
+        submitButton.disabled = true;
+        ratingButtons.forEach(b => b.disabled = true);
+        
+        const feedbackData = {
+          user_id: 'anonymous',
+          session_id: sessionStorage.getItem('session_id') || generateSessionId(),
+          query: query,
+          answer: answer,
+          rating: selectedRating,
+          feedback_type: 'overall',
+          comment: commentBox.value.trim() || null,
+          citations: citations
+        };
+        
+        try {
+          const res = await fetch('http://localhost:8000/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(feedbackData)
+          });
+          
+          const result = await res.json();
+          
+          if (res.ok && result.status === 'success') {
+            // Cambiar texto del botón
+            submitButton.textContent = i18n[currentLang].feedbackSent;
+            submitButton.classList.add('sent');
+            
+            // Ocultar comentario
+            commentBox.classList.remove('show');
+          } else {
+            console.error('Error al enviar feedback:', result.message);
+            alert('Error al enviar feedback. Por favor, intenta de nuevo.');
+            submitButton.disabled = false;
+            ratingButtons.forEach(b => b.disabled = false);
+          }
+        } catch (err) {
+          console.error('Error al enviar feedback:', err);
+          alert('Error de conexión. Por favor, intenta de nuevo.');
+          submitButton.disabled = false;
+          ratingButtons.forEach(b => b.disabled = false);
+        }
+      });
+    }
+
+    function generateSessionId() {
+      const id = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('session_id', id);
+      return id;
+    }
+
+
+
   </script>
 </body>
 </html>
