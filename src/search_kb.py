@@ -2,6 +2,8 @@ import os, psycopg
 from dotenv import load_dotenv
 from openai import OpenAI
 from collections import defaultdict
+from numpy import dot
+from numpy.linalg import norm
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -141,38 +143,45 @@ def fuse(vec_hits, key_hits, alpha=0.6, top=8, relevance_threshold=0.1):
 
 
 def detect_topic(query: str):
-    """
-    Checks if the user's question contains any keyword from the 'topics.key_words' column.
-    Returns (id, name) of the most relevant topic if matched, or None if there is no match.
-    Returns a list of topics 
-    """
     with conn.cursor() as cur:
-        # We only select the columns we need
-        cur.execute("SELECT id, name, key_words FROM topics;")
-        topics = cur.fetchall()  # Each row: (id, name, [keywords])
+        cur.execute("SELECT id, name, description, key_words FROM topics;")
+        topics = cur.fetchall()  # Each row: (id, name, description, [keywords])
 
-    query_lower = query.lower()
-    matched_topic = None
-    best_match_count = 0
+    query_emb = _embed(query) #emb query
+    scored_topics = []
 
-    for tid, name, keywords in topics:
-        if not keywords:
-            continue
+    for tid, name, description, keywords in topics:
+        # representative text for each topic
+        topic_text = f"Name: {name}\nDescription: {description}\nKeywords: {', '.join(keywords or [])}"
+        topic_emb = _embed(topic_text)
 
-        # Count how many keywords appear in the query
-        match_count = sum(1 for kw in keywords if kw.lower() in query_lower)
+        # semantic similarity between both 
+        sim = dot(query_emb, topic_emb) / (norm(query_emb) * norm(topic_emb) + 1e-8) #cosine similarity between the two embeddings
 
-        # Keep the topic with the highest number of matches
-        if match_count > best_match_count:
-            best_match_count = match_count
-            matched_topic = (tid, name)
+        # Bonus for exact keywords
+        #kw_score = sum(1 for kw in (keywords or []) if kw.lower() in query.lower())
+        #kw_score_norm = kw_score / max(1, len(keywords or [])) #normalization
 
-    # if no topic detected, all are return so the user chooses
-    if best_match_count == 0:
-        all_topics = [{"name": name} for _, name, _ in topics]
+        #final_score = 0.8 * sim + 0.2 * kw_score_norm
+        final_score=sim
+        scored_topics.append((tid, name, final_score))
+
+    # order
+    scored_topics.sort(key=lambda x: x[2], reverse=True)
+
+    if not scored_topics:
+        return None, []
+
+    best_tid, best_name, best_score = scored_topics[0]
+    second_score = scored_topics[1][2] if len(scored_topics) > 1 else 0
+
+    # if the best score is not higher than 0.55 or the difference between the 2 first score is small e.g. 0.1 
+    if best_score < 0.55 or (best_score - second_score < 0.10):
+        all_topics = [{"name": name} for _, name, _ in scored_topics]
         return None, all_topics
 
-    return matched_topic, []
+    return (best_tid, best_name), []
+
 
 
 def search_kb(query: str, top_k: int = 8, selected_topic_name: str | None = None):
