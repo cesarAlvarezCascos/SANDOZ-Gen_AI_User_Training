@@ -7,8 +7,7 @@ python-dotenv>=1.0.1,<2.0
 pypdf>=4.2.0,<5.0
 
 # Cliente Postgres (binario, evita problemas de compilación)
-psycopg-c>=3.1.19,<4.0
-
+psycopg
 # Adaptadores de pgvector para Python (no confundir con la extensión del servidor)
 pgvector>=0.2.5,<0.3
 
