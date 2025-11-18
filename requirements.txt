@@ -19,6 +19,8 @@ numpy>=1.26,<3.0
 langchain
 langchain-core
 langchain-community
+langchain-docling
+docling
 pymupdf
 chromadb
 langchain_text_splitters
