@@ -15,13 +15,13 @@ def _embed(q: str):
     return client.embeddings.create(model="text-embedding-3-small", input=q).data[0].embedding
 
 
-def vector_search(qvec, k=12, topic_name=None):
+def vector_search(qvec, k=12, topic_id=None):
     """
     Perform similarity search using cosine distance on chunk embeddings.
     Joins `chunk_embeddings` -> `chunks` -> `documents`.
     """
     with conn.cursor() as cur:
-        if topic_name: #added 
+        if topic_id:
             cur.execute("""
                 SELECT 
                     c.id AS chunk_id,
@@ -37,7 +37,7 @@ def vector_search(qvec, k=12, topic_name=None):
                 WHERE c.topic_id = %s
                 ORDER BY ce.embedding <=> %s::vector
                 LIMIT %s;
-            """, (qvec, topic_name, qvec, k))
+            """, (qvec, topic_id, qvec, k))
         else:
             cur.execute("""
                 SELECT 
@@ -210,7 +210,7 @@ def search_kb(query: str, top_k: int = 8, selected_topic_name: str | None = None
         topic_id, topic_name = matched_topic
 
     qvec = _embed(query)
-    vec_hits = vector_search(qvec, k=top_k * 2, topic_name=topic_name)
+    vec_hits = vector_search(qvec, k=top_k * 2, topic_id=topic_id)
     key_hits = keyword_search(query, k=top_k * 2, topic_id=topic_id)
     results = fuse(vec_hits, key_hits, alpha=0.6, top=top_k)
     return results
