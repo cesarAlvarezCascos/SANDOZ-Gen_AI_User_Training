@@ -24,27 +24,25 @@ class DatabaseOperator():
         
         with open(file_path, "rb") as f:
             data = f.read()
-
         # Overwrite if existing
-        try: 
-            res = supabase.storage.from_(self.bucket).upload(
-                path = file_name, 
-                file = data, 
-                file_options = {"cache-control": "3600", "upsert": "true", "content-type": "application/pdf"}
-                )
-        
+        try:
+            # use the client created in __init__ (self.client)
+            self.client.storage.from_(self.bucket).upload(
+                path=file_name,
+                file=data,
+                file_options={"cache-control": "3600", "upsert": "true", "content-type": "application/pdf"},
+            )
         except Exception as e:
             print(f"[ERROR] Failed to upload {file_name} to Supabase: {e}")
             return None
 
         # Generate public or signed URL
         try:
-            # url = supabase.storage.from_(bucket_name).get_public_url(file_name).get("publicUrl")
-            url = supabase.storage.from_(self.bucket).get_public_url(file_name)
+            url = self.client.storage.from_(self.bucket).get_public_url(file_name)
             return url
         except Exception as e:
             print(f"[ERROR] Failed to get public URL for {file_name}: {e}")
-            return None 
+            return None
         
 
     def delete_pdf(self, file_path: str):
@@ -68,10 +66,9 @@ class DatabaseOperator():
         return sha256.hexdigest()
     
 
-    def hash_exists(self, file_path: str):
+    def check_hash(self, content_hash):
         """Verifies if an existent document already has this hash """
 
-        content_hash = self.compute_pdf_hash(file_path)
         with self.conn.cursor() as cur:
             cur.execute("SELECT id, file_name " \
             "FROM documents " \
@@ -143,7 +140,6 @@ class DatabaseOperator():
             
             # Finally delete the document
             cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
-        self.conn.commit()
 
         # Delete from /pdfs
         if file_path and os.path.exists(file_path):
@@ -163,7 +159,6 @@ class DatabaseOperator():
                 RETURNING id
             """, (file_name, body, content_hash, embedding_avg, pdf_url))
             doc_id = cur.fetchone()[0]
-        self.conn.commit()
         return doc_id
 
 
@@ -175,7 +170,6 @@ class DatabaseOperator():
                 RETURNING id
             """, (document_id, idx, content, page_number))
             chunk_id = cur.fetchone()[0]
-        self.conn.commit()
         return chunk_id
 
 
@@ -185,7 +179,6 @@ class DatabaseOperator():
                 INSERT INTO chunk_embeddings (chunk_id, embedding)
                 VALUES (%s, %s)
             """, (chunk_id, embedding))
-        self.conn.commit()
 
     
     def sync_deletions(self):
